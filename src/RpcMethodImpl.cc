@@ -78,6 +78,9 @@
 #  include "BtAnnounce.h"
 #endif // ENABLE_BITTORRENT
 #include "CheckIntegrityEntry.h"
+#ifdef HAVE_SQLITE3
+#  include "Sqlite3SessionStore.h"
+#endif // HAVE_SQLITE3
 
 namespace aria2 {
 
@@ -1396,18 +1399,57 @@ GetGlobalStatRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
 std::unique_ptr<ValueBase> SaveSessionRpcMethod::process(const RpcRequest& req,
                                                          DownloadEngine* e)
 {
-  const std::string& filename = e->getOption()->get(PREF_SAVE_SESSION);
-  if (filename.empty()) {
-    throw DL_ABORT_EX("Filename is not given.");
+  bool textConfigured = !e->getOption()->get(PREF_SAVE_SESSION).empty();
+#ifdef HAVE_SQLITE3
+  bool sqliteConfigured = (e->getSqlite3Store() != nullptr);
+#else
+  bool sqliteConfigured = false;
+#endif // HAVE_SQLITE3
+
+  if (!textConfigured && !sqliteConfigured) {
+    throw DL_ABORT_EX("No session storage configured "
+                      "(neither --save-session nor "
+                      "--enable-sqlite3-persistence).");
   }
-  SessionSerializer sessionSerializer(e->getRequestGroupMan().get());
-  if (sessionSerializer.save(filename)) {
-    A2_LOG_NOTICE(
-        fmt(_("Serialized session to '%s' successfully."), filename.c_str()));
-    return createOKResponse();
+
+  bool anySaved = false;
+
+  if (textConfigured) {
+    const std::string& filename = e->getOption()->get(PREF_SAVE_SESSION);
+    SessionSerializer sessionSerializer(e->getRequestGroupMan().get());
+    if (sessionSerializer.save(filename)) {
+      A2_LOG_NOTICE(fmt(_("Serialized session to '%s' successfully."),
+                        filename.c_str()));
+      anySaved = true;
+    }
+    else {
+      A2_LOG_ERROR(
+          fmt("Failed to serialize session to '%s'.", filename.c_str()));
+    }
   }
-  throw DL_ABORT_EX(
-      fmt("Failed to serialize session to '%s'.", filename.c_str()));
+
+#ifdef HAVE_SQLITE3
+  if (sqliteConfigured) {
+    if (auto* sessionStore = e->getSqlite3SessionStore()) {
+      try {
+        sessionStore->saveAllTasks(e->getRequestGroupMan().get());
+        A2_LOG_NOTICE(
+            "Saved SQLite3 persistence via aria2.saveSession RPC.");
+        anySaved = true;
+      }
+      catch (RecoverableException& ex) {
+        A2_LOG_ERROR_EX(
+            "Failed to save SQLite3 persistence via RPC", ex);
+      }
+    }
+  }
+#endif // HAVE_SQLITE3
+
+  if (!anySaved) {
+    throw DL_ABORT_EX(
+        "All configured session storages failed to save.");
+  }
+  return createOKResponse();
 }
 
 std::unique_ptr<ValueBase>

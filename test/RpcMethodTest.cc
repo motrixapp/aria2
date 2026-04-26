@@ -20,12 +20,17 @@
 #include "array_fun.h"
 #include "download_helper.h"
 #include "FileEntry.h"
+#include "File.h"
 #include "RpcMethodFactory.h"
 #ifdef ENABLE_BITTORRENT
 #  include "BtRegistry.h"
 #  include "BtRuntime.h"
 #  include "bittorrent_helper.h"
 #endif // ENABLE_BITTORRENT
+#ifdef HAVE_SQLITE3
+#  include <sqlite3.h>
+#  include "Sqlite3PersistenceStore.h"
+#endif // HAVE_SQLITE3
 
 namespace aria2 {
 
@@ -84,6 +89,9 @@ class RpcMethodTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testSystemMulticall_fail);
   CPPUNIT_TEST(testSystemListMethods);
   CPPUNIT_TEST(testSystemListNotifications);
+#ifdef HAVE_SQLITE3
+  CPPUNIT_TEST(testSaveSessionRpcWritesBothBackends);
+#endif // HAVE_SQLITE3
   CPPUNIT_TEST_SUITE_END();
 
 private:
@@ -154,6 +162,9 @@ public:
   void testSystemMulticall_fail();
   void testSystemListMethods();
   void testSystemListNotifications();
+#ifdef HAVE_SQLITE3
+  void testSaveSessionRpcWritesBothBackends();
+#endif // HAVE_SQLITE3
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION(RpcMethodTest);
@@ -1453,6 +1464,58 @@ void RpcMethodTest::testSystemListNotifications()
     CPPUNIT_ASSERT_EQUAL(allNames[i], s->s());
   }
 }
+
+#ifdef HAVE_SQLITE3
+void RpcMethodTest::testSaveSessionRpcWritesBothBackends()
+{
+  std::string textPath =
+      std::string(A2_TEST_OUT_DIR) + "/save_session_dual.txt";
+  std::string dbPath =
+      std::string(A2_TEST_OUT_DIR) + "/save_session_dual.db";
+  std::remove(textPath.c_str());
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+
+  e_->getOption()->put(PREF_SAVE_SESSION, textPath);
+
+  auto store = make_unique<Sqlite3PersistenceStore>(dbPath);
+  store->open();
+  auto* storePtr = store.get();
+  e_->setSqlite3Store(std::move(store));
+
+  // Add one reserved RG so the task table has something to write.
+  auto dctx = std::make_shared<DownloadContext>(0, 0, "");
+  dctx->getFirstFileEntry()->addUri("http://example.com/x");
+  auto rg = std::make_shared<RequestGroup>(GroupId::create(), option_);
+  rg->setDownloadContext(dctx);
+  e_->getRequestGroupMan()->addReservedGroup(rg);
+
+  SaveSessionRpcMethod m;
+  auto res = m.execute(createReq(SaveSessionRpcMethod::getMethodName()),
+                       e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+
+  // Assert text file was written.
+  CPPUNIT_ASSERT(File(textPath).exists());
+
+  // Assert DB has 1 row in task table.
+  sqlite3_stmt* stmt = nullptr;
+  CPPUNIT_ASSERT_EQUAL(SQLITE_OK,
+                       sqlite3_prepare_v2(storePtr->raw(),
+                                          "SELECT COUNT(*) FROM task", -1,
+                                          &stmt, nullptr));
+  CPPUNIT_ASSERT_EQUAL(SQLITE_ROW, sqlite3_step(stmt));
+  CPPUNIT_ASSERT_EQUAL(1, sqlite3_column_int(stmt, 0));
+  sqlite3_finalize(stmt);
+
+  // Cleanup.
+  std::remove(textPath.c_str());
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+}
+#endif // HAVE_SQLITE3
 
 } // namespace rpc
 
