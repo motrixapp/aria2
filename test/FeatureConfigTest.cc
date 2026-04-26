@@ -89,6 +89,10 @@ void FeatureConfigTest::testFeatureSummary()
 #ifdef HAVE_LIBSSH2
       "SFTP",
 #endif // HAVE_LIBSSH2
+
+#ifdef HAVE_SQLITE3
+      "SQLite3-Persistence",
+#endif // HAVE_SQLITE3
   };
 
   std::string featuresString =
