@@ -91,6 +91,7 @@ class RpcMethodTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testSystemListNotifications);
 #ifdef HAVE_SQLITE3
   CPPUNIT_TEST(testSaveSessionRpcWritesBothBackends);
+  CPPUNIT_TEST(testChangeOptionPersistsToDb);
 #endif // HAVE_SQLITE3
   CPPUNIT_TEST_SUITE_END();
 
@@ -164,6 +165,7 @@ public:
   void testSystemListNotifications();
 #ifdef HAVE_SQLITE3
   void testSaveSessionRpcWritesBothBackends();
+  void testChangeOptionPersistsToDb();
 #endif // HAVE_SQLITE3
 };
 
@@ -1511,6 +1513,61 @@ void RpcMethodTest::testSaveSessionRpcWritesBothBackends()
 
   // Cleanup.
   std::remove(textPath.c_str());
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+}
+#endif // HAVE_SQLITE3
+
+
+#ifdef HAVE_SQLITE3
+void RpcMethodTest::testChangeOptionPersistsToDb()
+{
+  std::string dbPath =
+      std::string(A2_TEST_OUT_DIR) + "/change_option_persists.db";
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+
+  auto store = make_unique<Sqlite3PersistenceStore>(dbPath);
+  store->open();
+  auto* storePtr = store.get();
+  e_->setSqlite3Store(std::move(store));
+
+  // Add a reserved RG
+  auto dctx = std::make_shared<DownloadContext>(0, 0, "");
+  dctx->getFirstFileEntry()->addUri("http://example.com/x");
+  auto rg = std::make_shared<RequestGroup>(GroupId::create(), option_);
+  rg->setDownloadContext(dctx);
+  e_->getRequestGroupMan()->addReservedGroup(rg);
+
+  // Invoke ChangeOption with max-connection-per-server=5
+  ChangeOptionRpcMethod m;
+  auto req = createReq(ChangeOptionRpcMethod::getMethodName());
+  req.params->append(GroupId::toHex(rg->getGID()));
+  auto opts = Dict::g();
+  opts->put("max-connection-per-server", "5");
+  req.params->append(std::move(opts));
+  auto res = m.execute(std::move(req), e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+
+  // SELECT serialized FROM task WHERE gid = ?
+  sqlite3_stmt* stmt = nullptr;
+  CPPUNIT_ASSERT_EQUAL(
+      SQLITE_OK,
+      sqlite3_prepare_v2(storePtr->raw(),
+                         "SELECT serialized FROM task WHERE gid = ?", -1,
+                         &stmt, nullptr));
+  std::string gidHex = GroupId::toHex(rg->getGID());
+  sqlite3_bind_text(stmt, 1, gidHex.data(), gidHex.size(), SQLITE_STATIC);
+  CPPUNIT_ASSERT_EQUAL(SQLITE_ROW, sqlite3_step(stmt));
+  std::string serialized(
+      reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)));
+  sqlite3_finalize(stmt);
+
+  CPPUNIT_ASSERT(serialized.find("max-connection-per-server=5") !=
+                 std::string::npos);
+
   std::remove(dbPath.c_str());
   std::remove((dbPath + "-wal").c_str());
   std::remove((dbPath + "-shm").c_str());

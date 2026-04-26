@@ -86,6 +86,23 @@ namespace aria2 {
 
 namespace rpc {
 
+#ifdef HAVE_SQLITE3
+namespace {
+void persistTaskMutation(DownloadEngine* e,
+                         const std::shared_ptr<RequestGroup>& rg)
+{
+  if (auto* ss = e->getSqlite3SessionStore()) {
+    try {
+      ss->upsertTask(rg);
+    }
+    catch (RecoverableException& ex) {
+      A2_LOG_ERROR_EX("sqlite3-persistence: rpc mutation persist failed", ex);
+    }
+  }
+}
+} // namespace
+#endif // HAVE_SQLITE3
+
 namespace {
 const char VLB_TRUE[] = "true";
 const char VLB_FALSE[] = "false";
@@ -448,6 +465,9 @@ std::unique_ptr<ValueBase> pauseDownload(const RpcRequest& req,
     bool reserved = group->getState() == RequestGroup::STATE_WAITING;
     if (pauseRequestGroup(group, reserved, forcePause)) {
       e->setRefreshInterval(std::chrono::milliseconds(0));
+#ifdef HAVE_SQLITE3
+      persistTaskMutation(e, group);
+#endif // HAVE_SQLITE3
       return createGIDResponse(gid);
     }
   }
@@ -488,6 +508,15 @@ std::unique_ptr<ValueBase> pauseAllDownloads(const RpcRequest& req,
   auto& reservedGroups = e->getRequestGroupMan()->getReservedGroups();
   pauseRequestGroups(reservedGroups.begin(), reservedGroups.end(), true,
                      forcePause);
+#ifdef HAVE_SQLITE3
+  // TODO: batch into one transaction for strict atomicity if needed
+  for (auto& rg : groups) {
+    persistTaskMutation(e, rg);
+  }
+  for (auto& rg : reservedGroups) {
+    persistTaskMutation(e, rg);
+  }
+#endif // HAVE_SQLITE3
   return createOKResponse();
 }
 } // namespace
@@ -520,6 +549,9 @@ std::unique_ptr<ValueBase> UnpauseRpcMethod::process(const RpcRequest& req,
     group->setPauseRequested(false);
     e->getRequestGroupMan()->requestQueueCheck();
   }
+#ifdef HAVE_SQLITE3
+  persistTaskMutation(e, group);
+#endif // HAVE_SQLITE3
   return createGIDResponse(gid);
 }
 
@@ -531,6 +563,12 @@ std::unique_ptr<ValueBase> UnpauseAllRpcMethod::process(const RpcRequest& req,
     group->setPauseRequested(false);
   }
   e->getRequestGroupMan()->requestQueueCheck();
+#ifdef HAVE_SQLITE3
+  // TODO: batch into one transaction for strict atomicity if needed
+  for (auto& rg : groups) {
+    persistTaskMutation(e, rg);
+  }
+#endif // HAVE_SQLITE3
   return createOKResponse();
 }
 
@@ -1138,6 +1176,9 @@ std::unique_ptr<ValueBase> ChangeOptionRpcMethod::process(const RpcRequest& req,
       gatherChangeableOptionForReserved(&option, optsParam);
     }
     changeOption(group, option, e);
+#ifdef HAVE_SQLITE3
+    persistTaskMutation(e, group);
+#endif // HAVE_SQLITE3
   }
   else {
     throw DL_ABORT_EX(
@@ -1353,6 +1394,9 @@ std::unique_ptr<ValueBase> ChangeUriRpcMethod::process(const RpcRequest& req,
   auto res = List::g();
   res->append(Integer::g(delcount));
   res->append(Integer::g(addcount));
+#ifdef HAVE_SQLITE3
+  persistTaskMutation(e, group);
+#endif // HAVE_SQLITE3
   return std::move(res);
 }
 
