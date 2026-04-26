@@ -36,6 +36,8 @@
 
 #ifdef HAVE_SQLITE3
 
+#include <cstdio>
+#include <ctime>
 #include <string>
 
 #include "DlAbortEx.h"
@@ -55,6 +57,26 @@ static const char* kPragmas[] = {
     "PRAGMA temp_store = MEMORY;",
     "PRAGMA cache_size = -8000;",
 };
+
+bool runQuickCheck(sqlite3* db)
+{
+  sqlite3_stmt* stmt = nullptr;
+  if (sqlite3_prepare_v2(db, "PRAGMA quick_check;", -1, &stmt, nullptr) !=
+      SQLITE_OK) {
+    return false;
+  }
+  bool ok = false;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    const char* result =
+        reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+    if (result && std::string(result) == "ok") {
+      ok = true;
+    }
+  }
+  sqlite3_finalize(stmt);
+  return ok;
+}
+
 } // namespace
 
 Sqlite3PersistenceStore::Sqlite3PersistenceStore(std::string dbPath)
@@ -80,9 +102,52 @@ void Sqlite3PersistenceStore::open()
         fmt("sqlite3-persistence: failed to open %s: %s", dbPath_.c_str(),
             errMsg.c_str()));
   }
-  applyPragmas();
+  // Try to apply pragmas and run quick_check. If either fails (e.g., WAL
+  // replay on a corrupt body fails pragma execution) treat as corruption.
+  bool needsRecovery = false;
+  try {
+    applyPragmas();
+    if (!runQuickCheck(db_)) {
+      needsRecovery = true;
+    }
+  }
+  catch (...) {
+    needsRecovery = true;
+  }
+
+  if (needsRecovery) {
+    sqlite3_close_v2(db_);
+    db_ = nullptr;
+    auto ts = std::to_string(static_cast<long long>(std::time(nullptr)));
+    std::string corruptPath = dbPath_ + ".corrupt." + ts;
+    if (std::rename(dbPath_.c_str(), corruptPath.c_str()) != 0) {
+      throw DL_ABORT_EX(fmt(
+          "sqlite3-persistence: corrupt db at '%s' could not be renamed to '%s'",
+          dbPath_.c_str(), corruptPath.c_str()));
+    }
+    // Remove WAL/SHM siblings so SQLite starts fully fresh.
+    std::remove((corruptPath + "-wal").c_str());
+    std::remove((corruptPath + "-shm").c_str());
+    std::remove((dbPath_ + "-wal").c_str());
+    std::remove((dbPath_ + "-shm").c_str());
+    A2_LOG_NOTICE(fmt("sqlite3-persistence: detected corruption at '%s'; "
+                      "renamed to '%s'; starting with a fresh database.",
+                      dbPath_.c_str(), corruptPath.c_str()));
+    int rc = sqlite3_open_v2(dbPath_.c_str(), &db_,
+                             SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE,
+                             nullptr);
+    if (rc != SQLITE_OK) {
+      std::string errMsg = sqlite3_errmsg(db_);
+      sqlite3_close_v2(db_);
+      db_ = nullptr;
+      throw DL_ABORT_EX(
+          fmt("sqlite3-persistence: failed to recreate db: %s",
+              errMsg.c_str()));
+    }
+    applyPragmas();
+  }
+
   migrateIfNeeded(*this);
-  // quick_check added in Task 8
 }
 
 void Sqlite3PersistenceStore::applyPragmas()
