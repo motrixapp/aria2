@@ -34,6 +34,7 @@ SRCS =  \
 	BitfieldMan.cc BitfieldMan.h\
 	BtProgressInfoFile.h\
 	BufferedFile.cc BufferedFile.h\
+	MemBufferIOFile.cc MemBufferIOFile.h\
 	ByteArrayDiskWriter.cc ByteArrayDiskWriter.h\
 	ByteArrayDiskWriterFactory.h\
 	CheckIntegrityCommand.cc CheckIntegrityCommand.h\
@@ -414,7 +415,8 @@ SRCS += \
 	Sqlite3CookieParserImpl.cc Sqlite3CookieParserImpl.h\
 	Sqlite3PersistenceStore.cc Sqlite3PersistenceStore.h\
 	Sqlite3Migrations.cc Sqlite3Migrations.h\
-	Sqlite3BtProgressInfoFile.cc Sqlite3BtProgressInfoFile.h
+	Sqlite3BtProgressInfoFile.cc Sqlite3BtProgressInfoFile.h\
+	Sqlite3SessionStore.cc Sqlite3SessionStore.h
 endif # HAVE_SQLITE3
 
 if HAVE_LIBSSH2

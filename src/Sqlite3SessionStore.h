@@ -2,7 +2,7 @@
 /*
  * aria2 - The high speed download utility
  *
- * Copyright (C) 2010 Tatsuhiro Tsujikawa
+ * Copyright (C) 2026 Tatsuhiro Tsujikawa
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,52 +32,36 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#ifndef D_SESSION_SERIALIZER_H
-#define D_SESSION_SERIALIZER_H
+#ifndef D_SQLITE3_SESSION_STORE_H
+#define D_SQLITE3_SESSION_STORE_H
 
 #include "common.h"
 
-#include <memory>
-#include <set>
-#include <string>
-#include <iosfwd>
-
-#include "GroupId.h"
+#ifdef HAVE_SQLITE3
 
 namespace aria2 {
 
+class Sqlite3PersistenceStore;
 class RequestGroupMan;
-class IOFile;
-class RequestGroup;
-struct DownloadResult;
 
-class SessionSerializer {
-private:
-  RequestGroupMan* rgman_;
-  bool saveError_;
-  bool saveInProgress_;
-  bool saveWaiting_;
-  bool save(IOFile& fp) const;
-
-  // Write one RequestGroup's serialized representation into fp.
-  // Returns true if anything was written (i.e. the RG was not skipped).
-  bool renderOneInto(IOFile& fp, std::set<a2_gid_t>& metainfoCache,
-                     const std::shared_ptr<RequestGroup>& rg) const;
-
+class Sqlite3SessionStore {
 public:
-  SessionSerializer(RequestGroupMan* requestGroupMan);
+  explicit Sqlite3SessionStore(Sqlite3PersistenceStore* store);
+  ~Sqlite3SessionStore();
 
-  bool save(const std::string& filename) const;
+  Sqlite3SessionStore(const Sqlite3SessionStore&) = delete;
+  Sqlite3SessionStore& operator=(const Sqlite3SessionStore&) = delete;
 
-  // Calculates and returns SHA1 hash of the contents being
-  // serialized.
-  std::string calculateHash() const;
+  // Wholesale rewrite: DELETE FROM task; then INSERT one row per active and
+  // reserved RG, in queue-position order, all in a single transaction.
+  void saveAllTasks(RequestGroupMan* rgman);
 
-  // Render a single RequestGroup to a string in the aria2 session
-  // file format. Returns an empty string if the RG should be skipped.
-  std::string renderOne(const std::shared_ptr<RequestGroup>& rg) const;
+private:
+  Sqlite3PersistenceStore* store_;
 };
 
 } // namespace aria2
 
-#endif // D_SESSION_SERIALIZER_H
+#endif // HAVE_SQLITE3
+
+#endif // D_SQLITE3_SESSION_STORE_H

@@ -54,6 +54,8 @@
 #include "OptionParser.h"
 #include "OptionHandler.h"
 #include "SHA1IOFile.h"
+#include "MemBufferIOFile.h"
+#include "RequestGroup.h"
 
 #if HAVE_ZLIB
 #  include "GZipFile.h"
@@ -363,6 +365,22 @@ std::string SessionSerializer::calculateHash() const
   }
 
   return sha1io.digest();
+}
+
+bool SessionSerializer::renderOneInto(IOFile& fp,
+                                      std::set<a2_gid_t>& metainfoCache,
+                                      const std::shared_ptr<RequestGroup>& rg) const
+{
+  auto dr = rg->createDownloadResult();
+  return writeDownloadResult(fp, metainfoCache, dr, rg->isPauseRequested());
+}
+
+std::string SessionSerializer::renderOne(const std::shared_ptr<RequestGroup>& rg) const
+{
+  MemBufferIOFile fp;
+  std::set<a2_gid_t> metainfoCache;
+  renderOneInto(fp, metainfoCache, rg);
+  return fp.str();
 }
 
 } // namespace aria2

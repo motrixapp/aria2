@@ -2,7 +2,7 @@
 /*
  * aria2 - The high speed download utility
  *
- * Copyright (C) 2010 Tatsuhiro Tsujikawa
+ * Copyright (C) 2026 Tatsuhiro Tsujikawa
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,52 +32,70 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#ifndef D_SESSION_SERIALIZER_H
-#define D_SESSION_SERIALIZER_H
+#include "MemBufferIOFile.h"
 
-#include "common.h"
-
-#include <memory>
-#include <set>
-#include <string>
-#include <iosfwd>
-
-#include "GroupId.h"
+#include <cassert>
+#include <cstdarg>
+#include <cstdio>
 
 namespace aria2 {
 
-class RequestGroupMan;
-class IOFile;
-class RequestGroup;
-struct DownloadResult;
+MemBufferIOFile::MemBufferIOFile() {}
 
-class SessionSerializer {
-private:
-  RequestGroupMan* rgman_;
-  bool saveError_;
-  bool saveInProgress_;
-  bool saveWaiting_;
-  bool save(IOFile& fp) const;
+size_t MemBufferIOFile::onRead(void* ptr, size_t count)
+{
+  assert(0);
+  return 0;
+}
 
-  // Write one RequestGroup's serialized representation into fp.
-  // Returns true if anything was written (i.e. the RG was not skipped).
-  bool renderOneInto(IOFile& fp, std::set<a2_gid_t>& metainfoCache,
-                     const std::shared_ptr<RequestGroup>& rg) const;
+size_t MemBufferIOFile::onWrite(const void* ptr, size_t count)
+{
+  buf_.append(static_cast<const char*>(ptr), count);
+  return count;
+}
 
-public:
-  SessionSerializer(RequestGroupMan* requestGroupMan);
+char* MemBufferIOFile::onGets(char* s, int size)
+{
+  assert(0);
+  return nullptr;
+}
 
-  bool save(const std::string& filename) const;
+int MemBufferIOFile::onVprintf(const char* format, va_list va)
+{
+  char stackBuf[1024];
+  va_list vaCopy;
+  va_copy(vaCopy, va);
+  int n = vsnprintf(stackBuf, sizeof(stackBuf), format, vaCopy);
+  va_end(vaCopy);
+  if (n < 0) {
+    return n;
+  }
+  if (static_cast<size_t>(n) < sizeof(stackBuf)) {
+    buf_.append(stackBuf, static_cast<size_t>(n));
+  }
+  else {
+    // Allocate exact size and retry.
+    std::string tmp(static_cast<size_t>(n + 1), '\0');
+    va_copy(vaCopy, va);
+    n = vsnprintf(&tmp[0], tmp.size(), format, vaCopy);
+    va_end(vaCopy);
+    if (n >= 0) {
+      buf_.append(tmp.data(), static_cast<size_t>(n));
+    }
+  }
+  return n;
+}
 
-  // Calculates and returns SHA1 hash of the contents being
-  // serialized.
-  std::string calculateHash() const;
+int MemBufferIOFile::onFlush() { return 0; }
 
-  // Render a single RequestGroup to a string in the aria2 session
-  // file format. Returns an empty string if the RG should be skipped.
-  std::string renderOne(const std::shared_ptr<RequestGroup>& rg) const;
-};
+int MemBufferIOFile::onClose() { return 0; }
+
+bool MemBufferIOFile::onSupportsColor() { return false; }
+
+bool MemBufferIOFile::isError() const { return false; }
+
+bool MemBufferIOFile::isEOF() const { return false; }
+
+bool MemBufferIOFile::isOpen() const { return true; }
 
 } // namespace aria2
-
-#endif // D_SESSION_SERIALIZER_H

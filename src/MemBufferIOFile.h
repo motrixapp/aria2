@@ -2,7 +2,7 @@
 /*
  * aria2 - The high speed download utility
  *
- * Copyright (C) 2010 Tatsuhiro Tsujikawa
+ * Copyright (C) 2026 Tatsuhiro Tsujikawa
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,52 +32,39 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#ifndef D_SESSION_SERIALIZER_H
-#define D_SESSION_SERIALIZER_H
+#ifndef D_MEM_BUFFER_IO_FILE_H
+#define D_MEM_BUFFER_IO_FILE_H
 
-#include "common.h"
+#include "IOFile.h"
 
-#include <memory>
-#include <set>
 #include <string>
-#include <iosfwd>
-
-#include "GroupId.h"
 
 namespace aria2 {
 
-class RequestGroupMan;
-class IOFile;
-class RequestGroup;
-struct DownloadResult;
-
-class SessionSerializer {
-private:
-  RequestGroupMan* rgman_;
-  bool saveError_;
-  bool saveInProgress_;
-  bool saveWaiting_;
-  bool save(IOFile& fp) const;
-
-  // Write one RequestGroup's serialized representation into fp.
-  // Returns true if anything was written (i.e. the RG was not skipped).
-  bool renderOneInto(IOFile& fp, std::set<a2_gid_t>& metainfoCache,
-                     const std::shared_ptr<RequestGroup>& rg) const;
-
+// IOFile implementation that accumulates writes into an in-memory string.
+// Reads are unsupported (mirror SHA1IOFile no-op stubs).
+class MemBufferIOFile : public IOFile {
 public:
-  SessionSerializer(RequestGroupMan* requestGroupMan);
+  MemBufferIOFile();
 
-  bool save(const std::string& filename) const;
+  const std::string& str() const { return buf_; }
 
-  // Calculates and returns SHA1 hash of the contents being
-  // serialized.
-  std::string calculateHash() const;
+protected:
+  virtual size_t onRead(void* ptr, size_t count) CXX11_OVERRIDE;
+  virtual size_t onWrite(const void* ptr, size_t count) CXX11_OVERRIDE;
+  virtual char* onGets(char* s, int size) CXX11_OVERRIDE;
+  virtual int onVprintf(const char* format, va_list va) CXX11_OVERRIDE;
+  virtual int onFlush() CXX11_OVERRIDE;
+  virtual int onClose() CXX11_OVERRIDE;
+  virtual bool onSupportsColor() CXX11_OVERRIDE;
+  virtual bool isError() const CXX11_OVERRIDE;
+  virtual bool isEOF() const CXX11_OVERRIDE;
+  virtual bool isOpen() const CXX11_OVERRIDE;
 
-  // Render a single RequestGroup to a string in the aria2 session
-  // file format. Returns an empty string if the RG should be skipped.
-  std::string renderOne(const std::shared_ptr<RequestGroup>& rg) const;
+private:
+  std::string buf_;
 };
 
 } // namespace aria2
 
-#endif // D_SESSION_SERIALIZER_H
+#endif // D_MEM_BUFFER_IO_FILE_H
