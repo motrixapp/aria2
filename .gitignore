@@ -44,3 +44,17 @@ compile
 main.log
 main.trs
 test-suite.log
+.DS_Store
+build-release
+docs/
+build/
+
+# Claude Code
+# Track team-shared config, ignore personal/ephemeral data
+.claude/*
+!.claude/rules/
+!.claude/settings.json
+!.claude/launch.json
+.claude/settings.local.json
+.claude/worktrees/
+.claude/projects/

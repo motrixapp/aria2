@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"TaskCompleted\",\"additionalContext\":\"A task was just completed. Run /simplify to review the changed code for reuse, quality, and efficiency.\"}}'",
+            "statusMessage": "Preparing simplify review..."
+          }
+        ]
+      }
+    ]
+  }
+}
