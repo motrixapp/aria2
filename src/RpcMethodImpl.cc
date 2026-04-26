@@ -36,6 +36,7 @@
 
 #include <cassert>
 #include <algorithm>
+#include <climits>
 #include <sstream>
 
 #include "Logger.h"
@@ -1133,17 +1134,36 @@ void TellWaitingRpcMethod::createEntry(
   gatherProgress(entryDict, item, e, keys);
 }
 
-const DownloadResultList&
-TellStoppedRpcMethod::getItems(DownloadEngine* e) const
+std::unique_ptr<ValueBase>
+TellStoppedRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
 {
-  return e->getRequestGroupMan()->getDownloadResults();
-}
+  const Integer* offsetParam = checkRequiredParam<Integer>(req, 0);
+  const Integer* numParam = checkRequiredInteger(req, 1, IntegerGE(0));
+  const List* keysParam = checkParam<List>(req, 2);
 
-void TellStoppedRpcMethod::createEntry(
-    Dict* entryDict, const std::shared_ptr<DownloadResult>& item,
-    DownloadEngine* e, const std::vector<std::string>& keys) const
-{
-  gatherStoppedDownload(entryDict, item, keys);
+  int64_t offset = offsetParam->i();
+  int64_t num = numParam->i();
+
+  // Clamp offset/num to int range to avoid narrowing wrap-around UB.
+  // The aria2 manual defines offset as an integer with no documented limit;
+  // clients in practice never paginate past INT_MAX entries, so this is safe.
+  if (offset > INT_MAX) offset = INT_MAX;
+  if (offset < INT_MIN) offset = INT_MIN;
+  if (num > INT_MAX) num = INT_MAX;
+
+  std::vector<std::string> keys;
+  toStringList(std::back_inserter(keys), keysParam);
+
+  auto results = e->getRequestGroupMan()->getDownloadResultsRange(
+      static_cast<int>(offset), static_cast<int>(num), offset < 0);
+
+  auto list = List::g();
+  for (auto& dr : results) {
+    auto entryDict = Dict::g();
+    gatherStoppedDownload(entryDict.get(), dr, keys);
+    list->append(std::move(entryDict));
+  }
+  return std::move(list);
 }
 
 std::unique_ptr<ValueBase>

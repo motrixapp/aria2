@@ -393,16 +393,10 @@ public:
   static const char* getMethodName() { return "aria2.tellWaiting"; }
 };
 
-class TellStoppedRpcMethod
-    : public AbstractPaginationRpcMethod<DownloadResult> {
+class TellStoppedRpcMethod : public RpcMethod {
 protected:
-  virtual const DownloadResultList&
-  getItems(DownloadEngine* e) const CXX11_OVERRIDE;
-
-  virtual void
-  createEntry(Dict* entryDict, const std::shared_ptr<DownloadResult>& item,
-              DownloadEngine* e,
-              const std::vector<std::string>& keys) const CXX11_OVERRIDE;
+  virtual std::unique_ptr<ValueBase> process(const RpcRequest& req,
+                                             DownloadEngine* e) CXX11_OVERRIDE;
 
 public:
   static const char* getMethodName() { return "aria2.tellStopped"; }

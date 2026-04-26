@@ -29,8 +29,12 @@
 #endif // ENABLE_BITTORRENT
 #ifdef HAVE_SQLITE3
 #  include <sqlite3.h>
+#  include "DownloadResult.h"
+#  include "GroupId.h"
+#  include "Sqlite3DownloadResultRepository.h"
 #  include "Sqlite3PersistenceStore.h"
 #  include "Sqlite3SessionStore.h"
+#  include "error_code.h"
 #endif // HAVE_SQLITE3
 
 namespace aria2 {
@@ -95,6 +99,7 @@ class RpcMethodTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testChangeOptionPersistsToDb);
   CPPUNIT_TEST(testChangePositionPersistsOrder);
   CPPUNIT_TEST(testAddUriPersistsTaskRow);
+  CPPUNIT_TEST(testTellStoppedReadsBeyondMemoryCache);
 #endif // HAVE_SQLITE3
   CPPUNIT_TEST_SUITE_END();
 
@@ -171,6 +176,7 @@ public:
   void testChangeOptionPersistsToDb();
   void testChangePositionPersistsOrder();
   void testAddUriPersistsTaskRow();
+  void testTellStoppedReadsBeyondMemoryCache();
 #endif // HAVE_SQLITE3
 };
 
@@ -1680,6 +1686,71 @@ void RpcMethodTest::testAddUriPersistsTaskRow()
   CPPUNIT_ASSERT_EQUAL(1, sqlite3_column_int(stmt, 0));
   sqlite3_finalize(stmt);
 
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+}
+#endif // HAVE_SQLITE3
+
+#ifdef HAVE_SQLITE3
+void RpcMethodTest::testTellStoppedReadsBeyondMemoryCache()
+{
+  std::string dbPath =
+      std::string(A2_TEST_OUT_DIR) + "/tell_stopped_db.db";
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+
+  auto store = make_unique<Sqlite3PersistenceStore>(dbPath);
+  store->open();
+  e_->setSqlite3Store(std::move(store));
+
+  // Construct a repo and wire it into the RGM.
+  auto repo = make_unique<Sqlite3DownloadResultRepository>(
+      e_->getSqlite3Store());
+  Sqlite3DownloadResultRepository* repoPtr = repo.get();
+  e_->getRequestGroupMan()->setRepository(repoPtr);
+
+  // Set max-download-result=2 so memory FIFO is small. Documents the spec
+  // scenario where DB holds more history than fits in memory.
+  e_->getOption()->put(PREF_MAX_DOWNLOAD_RESULT, "2");
+
+  // Insert 5 rows directly into DB via repo->insert.
+  for (int i = 0; i < 5; ++i) {
+    auto dr = std::make_shared<DownloadResult>();
+    dr->gid = GroupId::create();
+    dr->result = error_code::FINISHED;
+    dr->option = option_;
+    dr->fileEntries.push_back(std::make_shared<FileEntry>(
+        std::string("/tmp/file") + util::itos(i), 1024, 0));
+    dr->totalLength = 1024;
+    dr->completedLength = 1024;
+    // pieceLength must be > 0 so BitfieldMan(pieceLength, totalLength) is valid
+    // when gatherStoppedDownload builds the files entry.
+    dr->numPieces = static_cast<size_t>(1);
+    dr->pieceLength = 1024;
+    dr->belongsTo = 0;
+    dr->inMemoryDownload = false;
+    repoPtr->insert(dr);
+  }
+
+  // Verify DB has 5.
+  CPPUNIT_ASSERT_EQUAL(int64_t(5), repoPtr->countAll());
+
+  // Call tellStopped(0, 5) — should return all 5 from DB.
+  TellStoppedRpcMethod m;
+  auto req = createReq(TellStoppedRpcMethod::getMethodName());
+  req.params->append(Integer::g(0));
+  req.params->append(Integer::g(5));
+  auto res = m.execute(std::move(req), e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+
+  const List* list = downcast<List>(res.param.get());
+  CPPUNIT_ASSERT(list != nullptr);
+  CPPUNIT_ASSERT_EQUAL(static_cast<size_t>(5), list->size());
+
+  // Cleanup.
+  e_->getRequestGroupMan()->setRepository(nullptr);
   std::remove(dbPath.c_str());
   std::remove((dbPath + "-wal").c_str());
   std::remove((dbPath + "-shm").c_str());

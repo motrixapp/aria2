@@ -1008,6 +1008,141 @@ void RequestGroupMan::purgeDownloadResult()
 #endif
 }
 
+std::vector<std::shared_ptr<DownloadResult>>
+RequestGroupMan::getDownloadResultsRange(int offset, int num, bool desc) const
+{
+  std::vector<std::shared_ptr<DownloadResult>> result;
+  if (num <= 0) {
+    return result;
+  }
+
+  // Snapshot memory list (oldest-first, as stored).
+  std::vector<std::shared_ptr<DownloadResult>> mem;
+  mem.reserve(downloadResults_.size());
+  for (auto& dr : downloadResults_) {
+    mem.push_back(dr);
+  }
+  const int M = static_cast<int>(mem.size());
+
+#ifdef HAVE_SQLITE3
+  int D = 0;
+  if (repo_) {
+    try {
+      D = static_cast<int>(repo_->countAll());
+    }
+    catch (Exception& ex) {
+      A2_LOG_ERROR_EX("sqlite3-persistence: countAll failed in tellStopped; "
+                      "degrading to memory-only",
+                      ex);
+    }
+  }
+#else
+  const int D = 0;
+#endif
+
+  if (!desc) {
+    // ASC slice (offset >= 0 by contract)
+    int off = (offset < 0) ? 0 : offset;
+    if (off >= D + M) {
+      return result;
+    }
+    if (off < D) {
+#ifdef HAVE_SQLITE3
+      if (repo_) {
+        try {
+          result = repo_->range(off, num, /*desc=*/false);
+        }
+        catch (RecoverableException& ex) {
+          A2_LOG_ERROR_EX("sqlite3-persistence: tellStopped DB read failed; "
+                          "degrading to memory-only",
+                          ex);
+          result.clear();
+        }
+      }
+#endif
+      if (static_cast<int>(result.size()) < num) {
+        int needed = num - static_cast<int>(result.size());
+        for (int i = 0; i < needed && i < M; ++i) {
+          result.push_back(mem[i]);
+        }
+      }
+    }
+    else {
+      // off >= D: slice purely from memory
+      int memOff = off - D;
+      int end = std::min(memOff + num, M);
+      for (int i = memOff; i < end; ++i) {
+        result.push_back(mem[i]);
+      }
+    }
+  }
+  else {
+    // DESC slice (offset < 0)
+    int abs_off = -offset - 1;
+    if (abs_off < 0 || abs_off >= M + D) {
+      return result;
+    }
+    if (abs_off < M) {
+      // Take from tail of mem (newest-first)
+      int start = M - 1 - abs_off;
+      int end = std::max(start - num + 1, 0);
+      for (int i = start; i >= end; --i) {
+        result.push_back(mem[i]);
+      }
+      if (static_cast<int>(result.size()) < num) {
+        int needed = num - static_cast<int>(result.size());
+#ifdef HAVE_SQLITE3
+        if (repo_) {
+          try {
+            auto more = repo_->range(0, needed, /*desc=*/true);
+            for (auto& dr : more) {
+              result.push_back(dr);
+            }
+          }
+          catch (RecoverableException& ex) {
+            A2_LOG_ERROR_EX("sqlite3-persistence: tellStopped DB read failed; "
+                            "degrading to memory-only",
+                            ex);
+          }
+        }
+#endif
+      }
+    }
+    else {
+#ifdef HAVE_SQLITE3
+      if (repo_) {
+        try {
+          int dbOff = abs_off - M;
+          result = repo_->range(dbOff, num, /*desc=*/true);
+        }
+        catch (RecoverableException& ex) {
+          A2_LOG_ERROR_EX(
+              "sqlite3-persistence: tellStopped DB read failed", ex);
+        }
+      }
+#endif
+    }
+  }
+
+  return result;
+}
+
+int64_t RequestGroupMan::getDownloadResultsCount() const
+{
+  int64_t count = static_cast<int64_t>(downloadResults_.size());
+#ifdef HAVE_SQLITE3
+  if (repo_) {
+    try {
+      count += repo_->countAll();
+    }
+    catch (RecoverableException& ex) {
+      A2_LOG_ERROR_EX("sqlite3-persistence: countAll failed", ex);
+    }
+  }
+#endif
+  return count;
+}
+
 std::shared_ptr<ServerStat>
 RequestGroupMan::findServerStat(const std::string& hostname,
                                 const std::string& protocol) const

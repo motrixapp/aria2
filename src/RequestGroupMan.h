@@ -263,6 +263,15 @@ public:
     return downloadResults_;
   }
 
+  // Returns a paginated slice of completed download results, combining
+  // in-memory and (when SQLite is active) DB rows.  offset >= 0 for ASC,
+  // offset < 0 for DESC (desc must equal offset < 0).
+  std::vector<std::shared_ptr<DownloadResult>>
+  getDownloadResultsRange(int offset, int num, bool desc) const;
+
+  // Returns the total count of completed download results (memory + DB).
+  int64_t getDownloadResultsCount() const;
+
   std::shared_ptr<DownloadResult> findDownloadResult(a2_gid_t gid) const;
 
   // Removes all download results.
