@@ -38,6 +38,8 @@
 
 #include <cstdlib>
 #include <cstdio>
+#include <chrono>
+#include <thread>
 
 #include <cppunit/extensions/HelperMacros.h>
 
@@ -66,6 +68,7 @@ class Sqlite3BtProgressInfoFileTest : public CppUnit::TestFixture {
   CPPUNIT_TEST_SUITE(Sqlite3BtProgressInfoFileTest);
 #ifdef ENABLE_BITTORRENT
   CPPUNIT_TEST(testSaveRoundTrip);
+  CPPUNIT_TEST(testDirtySkipUnchangedContent);
 #endif
   CPPUNIT_TEST_SUITE_END();
 
@@ -154,6 +157,7 @@ public:
 
 #ifdef ENABLE_BITTORRENT
   void testSaveRoundTrip();
+  void testDirtySkipUnchangedContent();
 #endif
 };
 
@@ -188,6 +192,50 @@ void Sqlite3BtProgressInfoFileTest::testSaveRoundTrip()
   CPPUNIT_ASSERT(loadBf->isBitSet(70));
   CPPUNIT_ASSERT(!loadBf->isBitSet(1));
   CPPUNIT_ASSERT(!loadBf->isBitSet(50));
+}
+
+void Sqlite3BtProgressInfoFileTest::testDirtySkipUnchangedContent()
+{
+  bitfield_->setBit(0);
+  bitfield_->setBit(3);
+  bitfield_->setBit(70);
+
+  Sqlite3BtProgressInfoFile saver(dctx_, pieceStorage_, option_.get(),
+                                  store_.get());
+  saver.setBtRuntime(btRuntime_);
+  saver.setPeerStorage(peerStorage_);
+
+  saver.save();
+
+  // Query the row's updated_at right after the first save.
+  auto queryUpdatedAt = [&]() -> int64_t {
+    sqlite3_stmt* stmt = nullptr;
+    CPPUNIT_ASSERT_EQUAL(
+        SQLITE_OK,
+        sqlite3_prepare_v2(store_->raw(),
+                           "SELECT updated_at FROM task_progress WHERE gid = ?",
+                           -1, &stmt, nullptr));
+    auto gidHex = GroupId::toHex(rg_->getGID());
+    sqlite3_bind_text(stmt, 1, gidHex.data(), gidHex.size(), SQLITE_STATIC);
+    CPPUNIT_ASSERT_EQUAL(SQLITE_ROW, sqlite3_step(stmt));
+    int64_t v = sqlite3_column_int64(stmt, 0);
+    sqlite3_finalize(stmt);
+    return v;
+  };
+
+  int64_t firstUpdatedAt = queryUpdatedAt();
+
+  // Sleep so wall-clock advances enough that a redundant UPSERT would change
+  // updated_at to a different millisecond.
+  std::this_thread::sleep_for(std::chrono::milliseconds(2));
+
+  // Save again with no in-memory state mutation between calls — dirty-skip
+  // path must short-circuit before any UPSERT runs.
+  saver.save();
+
+  int64_t secondUpdatedAt = queryUpdatedAt();
+
+  CPPUNIT_ASSERT_EQUAL(firstUpdatedAt, secondUpdatedAt);
 }
 #endif
 
