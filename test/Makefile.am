@@ -111,7 +111,8 @@ endif # HAVE_ZLIB
 if HAVE_SQLITE3
 aria2c_SOURCES += Sqlite3CookieParserTest.cc\
 	Sqlite3PersistenceStoreTest.cc\
-	Sqlite3MigrationsTest.cc
+	Sqlite3MigrationsTest.cc\
+	Sqlite3BtProgressInfoFileTest.cc
 endif # HAVE_SQLITE3
 
 aria2c_SOURCES += MessageDigestHelperTest.cc\
