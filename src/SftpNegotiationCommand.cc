@@ -50,6 +50,7 @@
 #include "Segment.h"
 #include "DownloadContext.h"
 #include "DefaultBtProgressInfoFile.h"
+#include "BtProgressInfoFileFactory.h"
 #include "RequestGroupMan.h"
 #include "SocketCore.h"
 #include "fmt.h"
@@ -279,8 +280,9 @@ void SftpNegotiationCommand::onFileSizeDetermined(int64_t totalLength)
     return;
   }
   else {
-    auto progressInfoFile = std::make_shared<DefaultBtProgressInfoFile>(
-        getDownloadContext(), nullptr, getOption().get());
+    auto progressInfoFile = makeBtProgressInfoFile(
+        getDownloadContext(), std::shared_ptr<PieceStorage>{}, getOption().get(),
+        getDownloadEngine());
     getRequestGroup()->adjustFilename(progressInfoFile);
     getRequestGroup()->initPieceStorage();
 

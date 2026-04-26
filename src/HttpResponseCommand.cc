@@ -49,6 +49,7 @@
 #include "DiskAdaptor.h"
 #include "PieceStorage.h"
 #include "DefaultBtProgressInfoFile.h"
+#include "BtProgressInfoFileFactory.h"
 #include "DownloadFailureException.h"
 #include "DlAbortEx.h"
 #include "util.h"
@@ -351,8 +352,9 @@ bool HttpResponseCommand::shouldInflateContentEncoding(
 bool HttpResponseCommand::handleDefaultEncoding(
     std::unique_ptr<HttpResponse> httpResponse)
 {
-  auto progressInfoFile = std::make_shared<DefaultBtProgressInfoFile>(
-      getDownloadContext(), std::shared_ptr<PieceStorage>{}, getOption().get());
+  auto progressInfoFile = makeBtProgressInfoFile(
+      getDownloadContext(), std::shared_ptr<PieceStorage>{}, getOption().get(),
+      getDownloadEngine());
   getRequestGroup()->adjustFilename(progressInfoFile);
   getRequestGroup()->initPieceStorage();
 
