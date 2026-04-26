@@ -60,6 +60,7 @@
 #include "DownloadFailureException.h"
 #include "RequestGroupMan.h"
 #include "DefaultBtProgressInfoFile.h"
+#include "BtProgressInfoFileFactory.h"
 #include "DefaultPieceStorage.h"
 #include "download_handlers.h"
 #include "MemoryBufferPreDownloadHandler.h"
@@ -218,10 +219,11 @@ void RequestGroup::closeFile()
 
 // TODO The function name is not intuitive at all.. it does not convey
 // that this function open file.
-std::unique_ptr<CheckIntegrityEntry> RequestGroup::createCheckIntegrityEntry()
+std::unique_ptr<CheckIntegrityEntry>
+RequestGroup::createCheckIntegrityEntry(DownloadEngine* e)
 {
-  auto infoFile = std::make_shared<DefaultBtProgressInfoFile>(
-      downloadContext_, pieceStorage_, option_.get());
+  auto infoFile =
+      makeBtProgressInfoFile(downloadContext_, pieceStorage_, option_.get(), e);
 
   if (option_->getAsBool(PREF_CHECK_INTEGRITY) &&
       downloadContext_->isPieceHashVerificationAvailable()) {
@@ -310,10 +312,10 @@ void RequestGroup::createInitialCommand(
       }
     }
 
-    std::shared_ptr<DefaultBtProgressInfoFile> progressInfoFile;
+    std::shared_ptr<BtProgressInfoFile> progressInfoFile;
     if (!metadataGetMode) {
-      progressInfoFile = std::make_shared<DefaultBtProgressInfoFile>(
-          downloadContext_, pieceStorage_, option_.get());
+      progressInfoFile = makeBtProgressInfoFile(
+          downloadContext_, pieceStorage_, option_.get(), e);
     }
 
     auto btRuntime = std::make_shared<BtRuntime>();
@@ -470,11 +472,11 @@ void RequestGroup::createInitialCommand(
       createNextCommand(commands, e, 1);
       return;
     }
-    auto progressInfoFile = std::make_shared<DefaultBtProgressInfoFile>(
-        downloadContext_, nullptr, option_.get());
+    auto progressInfoFile = makeBtProgressInfoFile(
+        downloadContext_, nullptr, option_.get(), e);
     adjustFilename(progressInfoFile);
     initPieceStorage();
-    auto checkEntry = createCheckIntegrityEntry();
+    auto checkEntry = createCheckIntegrityEntry(e);
     if (checkEntry) {
       processCheckIntegrityEntry(commands, std::move(checkEntry), e);
     }
@@ -500,8 +502,8 @@ void RequestGroup::createInitialCommand(
   if (downloadContext_->getFileEntries().size() > 1) {
     pieceStorage_->setupFileFilter();
   }
-  auto progressInfoFile = std::make_shared<DefaultBtProgressInfoFile>(
-      downloadContext_, pieceStorage_, option_.get());
+  auto progressInfoFile = makeBtProgressInfoFile(
+      downloadContext_, pieceStorage_, option_.get(), e);
   removeDefunctControlFile(progressInfoFile);
   // Call Load, Save and file allocation command here
   if (progressInfoFile->exists()) {

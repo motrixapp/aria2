@@ -289,7 +289,8 @@ void SftpNegotiationCommand::onFileSizeDetermined(int64_t totalLength)
       return;
     }
 
-    auto checkIntegrityEntry = getRequestGroup()->createCheckIntegrityEntry();
+    auto checkIntegrityEntry =
+        getRequestGroup()->createCheckIntegrityEntry(getDownloadEngine());
     if (!checkIntegrityEntry) {
       sequence_ = SEQ_DOWNLOAD_ALREADY_COMPLETED;
       poolConnection();

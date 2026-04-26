@@ -361,7 +361,8 @@ bool HttpResponseCommand::handleDefaultEncoding(
     return true;
   }
 
-  auto checkEntry = getRequestGroup()->createCheckIntegrityEntry();
+  auto checkEntry =
+      getRequestGroup()->createCheckIntegrityEntry(getDownloadEngine());
   if (!checkEntry) {
     return true;
   }
