@@ -46,6 +46,9 @@
 #include "RequestGroup.h"
 #include "prefs.h"
 #include "DownloadEngineFactory.h"
+#ifdef HAVE_SQLITE3
+#  include "Sqlite3PersistenceStore.h"
+#endif // HAVE_SQLITE3
 #include "RecoverableException.h"
 #include "message.h"
 #include "util.h"
@@ -163,6 +166,14 @@ MultiUrlRequestInfo::MultiUrlRequestInfo(
 
 MultiUrlRequestInfo::~MultiUrlRequestInfo() = default;
 
+#ifdef HAVE_SQLITE3
+void MultiUrlRequestInfo::setSqlite3Store(
+    std::unique_ptr<Sqlite3PersistenceStore> store)
+{
+  sqlite3Store_ = std::move(store);
+}
+#endif // HAVE_SQLITE3
+
 void MultiUrlRequestInfo::printMessageForContinue()
 {
   if (!option_->getAsBool(PREF_QUIET)) {
@@ -205,6 +216,12 @@ int MultiUrlRequestInfo::prepare()
     // RequestGroups will be transferred to DownloadEngine
     e_ = DownloadEngineFactory().newDownloadEngine(option_.get(),
                                                    std::move(requestGroups_));
+
+#ifdef HAVE_SQLITE3
+    if (sqlite3Store_) {
+      e_->setSqlite3Store(std::move(sqlite3Store_));
+    }
+#endif // HAVE_SQLITE3
 
 #ifdef ENABLE_WEBSOCKET
     if (option_->getAsBool(PREF_ENABLE_RPC)) {

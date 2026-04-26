@@ -78,6 +78,9 @@
 #  include "metalink_helper.h"
 #  include "MetalinkEntry.h"
 #endif // ENABLE_METALINK
+#ifdef HAVE_SQLITE3
+#  include "Sqlite3PersistenceStore.h"
+#endif // HAVE_SQLITE3
 
 extern char* optarg;
 extern int optind, opterr, optopt;
@@ -243,6 +246,28 @@ Context::Context(bool standalone, int argc, char** argv, const KeyVals& options)
     std::string ifaces = op->get(PREF_MULTIPLE_INTERFACE);
     SocketCore::bindAllAddress(ifaces);
   }
+#ifdef HAVE_SQLITE3
+  std::unique_ptr<Sqlite3PersistenceStore> sqlite3Store;
+  if (op->getAsBool(PREF_ENABLE_SQLITE3_PERSISTENCE)) {
+    std::string dbPath = op->get(PREF_SQLITE3_DB_PATH);
+    if (dbPath.empty()) {
+      std::string dir = op->get(PREF_DIR);
+      if (dir.empty()) {
+        dir = ".";
+      }
+      dbPath = dir + "/aria2.db";
+    }
+    A2_LOG_INFO(fmt("sqlite3-persistence: using db at %s", dbPath.c_str()));
+    sqlite3Store = make_unique<Sqlite3PersistenceStore>(dbPath);
+    sqlite3Store->open();
+    if (op->getAsBool(PREF_DEFERRED_INPUT)) {
+      A2_LOG_WARN("sqlite3-persistence: --deferred-input is not compatible "
+                  "with --enable-sqlite3-persistence; forcing it to false.");
+      op->put(PREF_DEFERRED_INPUT, A2_V_FALSE);
+    }
+  }
+#endif // HAVE_SQLITE3
+
   std::vector<std::shared_ptr<RequestGroup>> requestGroups;
   std::shared_ptr<UriListParser> uriListParser;
 #ifdef ENABLE_BITTORRENT
@@ -312,6 +337,11 @@ Context::Context(bool standalone, int argc, char** argv, const KeyVals& options)
     }
     reqinfo = std::make_shared<MultiUrlRequestInfo>(std::move(requestGroups),
                                                     op, uriListParser);
+#ifdef HAVE_SQLITE3
+    if (sqlite3Store) {
+      reqinfo->setSqlite3Store(std::move(sqlite3Store));
+    }
+#endif // HAVE_SQLITE3
   }
 }
 

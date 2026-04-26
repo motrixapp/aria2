@@ -51,6 +51,9 @@ class RequestGroup;
 class Option;
 class UriListParser;
 class DownloadEngine;
+#ifdef HAVE_SQLITE3
+class Sqlite3PersistenceStore;
+#endif // HAVE_SQLITE3
 
 class MultiUrlRequestInfo {
 private:
@@ -61,6 +64,10 @@ private:
   std::shared_ptr<UriListParser> uriListParser_;
 
   std::unique_ptr<DownloadEngine> e_;
+
+#ifdef HAVE_SQLITE3
+  std::unique_ptr<Sqlite3PersistenceStore> sqlite3Store_;
+#endif // HAVE_SQLITE3
 
   sigset_t mask_;
 
@@ -106,6 +113,10 @@ public:
   {
     useSignalHandler_ = useSignalHandler;
   }
+
+#ifdef HAVE_SQLITE3
+  void setSqlite3Store(std::unique_ptr<Sqlite3PersistenceStore> store);
+#endif // HAVE_SQLITE3
 };
 
 } // namespace aria2
