@@ -42,6 +42,7 @@
 #include "fmt.h"
 #include "LogFactory.h"
 #include "Logger.h"
+#include "Sqlite3Migrations.h"
 
 namespace aria2 {
 
@@ -80,7 +81,7 @@ void Sqlite3PersistenceStore::open()
             errMsg.c_str()));
   }
   applyPragmas();
-  // migration hook added in Task 4
+  migrateIfNeeded(*this);
   // quick_check added in Task 8
 }
 
