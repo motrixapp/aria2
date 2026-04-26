@@ -42,6 +42,7 @@
 #endif // HAVE_SYS_RESOURCE_H
 
 #include <numeric>
+#include <unordered_map>
 #include <vector>
 #include <iostream>
 
@@ -80,6 +81,7 @@
 #endif // ENABLE_METALINK
 #ifdef HAVE_SQLITE3
 #  include "Sqlite3PersistenceStore.h"
+#  include "Sqlite3SessionStore.h"
 #endif // HAVE_SQLITE3
 
 extern char* optarg;
@@ -270,6 +272,14 @@ Context::Context(bool standalone, int argc, char** argv, const KeyVals& options)
 
   std::vector<std::shared_ptr<RequestGroup>> requestGroups;
   std::shared_ptr<UriListParser> uriListParser;
+#ifdef HAVE_SQLITE3
+  if (sqlite3Store) {
+    Sqlite3SessionStore session(sqlite3Store.get());
+    session.loadActiveTasksInto(requestGroups, op);
+    A2_LOG_INFO(fmt("sqlite3-persistence: restored %zu active task(s) from db.",
+                    requestGroups.size()));
+  }
+#endif // HAVE_SQLITE3
 #ifdef ENABLE_BITTORRENT
   if (!op->blank(PREF_TORRENT_FILE)) {
     if (op->get(PREF_SHOW_FILES) == A2_V_TRUE) {
@@ -312,6 +322,30 @@ Context::Context(bool standalone, int argc, char** argv, const KeyVals& options)
     else {
       createRequestGroupForUri(requestGroups, op, args, false, false, true);
     }
+
+#ifdef HAVE_SQLITE3
+  if (sqlite3Store && !requestGroups.empty()) {
+    // Dedupe by GID — keep the last occurrence so CLI -i / args preempt DB rows.
+    std::unordered_map<a2_gid_t, size_t> lastIdx;
+    lastIdx.reserve(requestGroups.size());
+    for (size_t i = 0; i < requestGroups.size(); ++i) {
+      lastIdx[requestGroups[i]->getGID()] = i;
+    }
+    if (lastIdx.size() != requestGroups.size()) {
+      std::vector<std::shared_ptr<RequestGroup>> deduped;
+      deduped.reserve(lastIdx.size());
+      for (size_t i = 0; i < requestGroups.size(); ++i) {
+        if (lastIdx[requestGroups[i]->getGID()] == i) {
+          deduped.push_back(std::move(requestGroups[i]));
+        }
+      }
+      A2_LOG_INFO(fmt("sqlite3-persistence: deduped %zu duplicate GID(s) "
+                      "(CLI / -i preempts DB).",
+                      requestGroups.size() - deduped.size()));
+      requestGroups = std::move(deduped);
+    }
+  }
+#endif // HAVE_SQLITE3
 
   // Remove option values which is only valid for URIs specified in
   // command-line. If they are left, because op is used as a template
