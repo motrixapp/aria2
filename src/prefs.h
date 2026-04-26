@@ -263,6 +263,10 @@ extern PrefPtr PREF_REMOVE_CONTROL_FILE;
 extern PrefPtr PREF_ALWAYS_RESUME;
 // value: 1*digit
 extern PrefPtr PREF_MAX_RESUME_FAILURE_TRIES;
+// SQLite3 persistence
+extern PrefPtr PREF_ENABLE_SQLITE3_PERSISTENCE;
+extern PrefPtr PREF_SQLITE3_DB_PATH;
+extern PrefPtr PREF_SQLITE3_HISTORY_LIMIT;
 // value: string that your file system recognizes as a file name.
 extern PrefPtr PREF_SAVE_SESSION;
 // value: 1*digit

@@ -310,6 +310,10 @@ PrefPtr PREF_REMOVE_CONTROL_FILE = makePref("remove-control-file");
 PrefPtr PREF_ALWAYS_RESUME = makePref("always-resume");
 // value: 1*digit
 PrefPtr PREF_MAX_RESUME_FAILURE_TRIES = makePref("max-resume-failure-tries");
+// SQLite3 persistence
+PrefPtr PREF_ENABLE_SQLITE3_PERSISTENCE = makePref("enable-sqlite3-persistence");
+PrefPtr PREF_SQLITE3_DB_PATH = makePref("sqlite3-db-path");
+PrefPtr PREF_SQLITE3_HISTORY_LIMIT = makePref("sqlite3-history-limit");
 // value: string that your file system recognizes as a file name.
 PrefPtr PREF_SAVE_SESSION = makePref("save-session");
 // value: 1*digit
