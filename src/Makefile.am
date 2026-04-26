@@ -417,7 +417,8 @@ SRCS += \
 	Sqlite3PersistenceStore.cc Sqlite3PersistenceStore.h\
 	Sqlite3Migrations.cc Sqlite3Migrations.h\
 	Sqlite3BtProgressInfoFile.cc Sqlite3BtProgressInfoFile.h\
-	Sqlite3SessionStore.cc Sqlite3SessionStore.h
+	Sqlite3SessionStore.cc Sqlite3SessionStore.h\
+	Sqlite3DownloadResultRepository.cc Sqlite3DownloadResultRepository.h
 endif # HAVE_SQLITE3
 
 if HAVE_LIBSSH2

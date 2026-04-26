@@ -383,4 +383,13 @@ std::string SessionSerializer::renderOne(const std::shared_ptr<RequestGroup>& rg
   return fp.str();
 }
 
+std::string SessionSerializer::renderResult(
+    const std::shared_ptr<DownloadResult>& dr) const
+{
+  MemBufferIOFile fp;
+  std::set<a2_gid_t> metainfoCache;
+  writeDownloadResult(fp, metainfoCache, dr, /*pauseRequested=*/false);
+  return fp.str();
+}
+
 } // namespace aria2

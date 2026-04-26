@@ -2,7 +2,7 @@
 /*
  * aria2 - The high speed download utility
  *
- * Copyright (C) 2010 Tatsuhiro Tsujikawa
+ * Copyright (C) 2026 Tatsuhiro Tsujikawa
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,56 +32,42 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#ifndef D_SESSION_SERIALIZER_H
-#define D_SESSION_SERIALIZER_H
+#ifndef D_SQLITE3_DOWNLOAD_RESULT_REPOSITORY_H
+#define D_SQLITE3_DOWNLOAD_RESULT_REPOSITORY_H
 
 #include "common.h"
 
-#include <memory>
-#include <set>
-#include <string>
-#include <iosfwd>
+#ifdef HAVE_SQLITE3
 
-#include "GroupId.h"
+#include <memory>
 
 namespace aria2 {
 
-class RequestGroupMan;
-class IOFile;
-class RequestGroup;
+class Sqlite3PersistenceStore;
 struct DownloadResult;
 
-class SessionSerializer {
-private:
-  RequestGroupMan* rgman_;
-  bool saveError_;
-  bool saveInProgress_;
-  bool saveWaiting_;
-  bool save(IOFile& fp) const;
-
-  // Write one RequestGroup's serialized representation into fp.
-  // Returns true if anything was written (i.e. the RG was not skipped).
-  bool renderOneInto(IOFile& fp, std::set<a2_gid_t>& metainfoCache,
-                     const std::shared_ptr<RequestGroup>& rg) const;
-
+class Sqlite3DownloadResultRepository {
 public:
-  SessionSerializer(RequestGroupMan* requestGroupMan);
+  explicit Sqlite3DownloadResultRepository(Sqlite3PersistenceStore* store);
+  ~Sqlite3DownloadResultRepository();
 
-  bool save(const std::string& filename) const;
+  Sqlite3DownloadResultRepository(const Sqlite3DownloadResultRepository&) =
+      delete;
+  Sqlite3DownloadResultRepository& operator=(
+      const Sqlite3DownloadResultRepository&) = delete;
 
-  // Calculates and returns SHA1 hash of the contents being
-  // serialized.
-  std::string calculateHash() const;
+  // Inserts a single DownloadResult into download_history (parent),
+  // download_history_files (one row per fileEntry), and
+  // download_history_file_uris (one row per URI on each fileEntry).
+  // Single transaction; partial failure rolls back the whole 3-table write.
+  void insert(const std::shared_ptr<DownloadResult>& dr);
 
-  // Render a single RequestGroup to a string in the aria2 session
-  // file format. Returns an empty string if the RG should be skipped.
-  std::string renderOne(const std::shared_ptr<RequestGroup>& rg) const;
-
-  // Render a single DownloadResult to a string in the aria2 session
-  // file format. Returns an empty string if the DR would be skipped.
-  std::string renderResult(const std::shared_ptr<DownloadResult>& dr) const;
+private:
+  Sqlite3PersistenceStore* store_;
 };
 
 } // namespace aria2
 
-#endif // D_SESSION_SERIALIZER_H
+#endif // HAVE_SQLITE3
+
+#endif // D_SQLITE3_DOWNLOAD_RESULT_REPOSITORY_H
