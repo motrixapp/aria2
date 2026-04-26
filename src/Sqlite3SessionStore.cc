@@ -127,72 +127,80 @@ Sqlite3SessionStore::~Sqlite3SessionStore() = default;
 
 void Sqlite3SessionStore::saveAllTasks(RequestGroupMan* rgman)
 {
-  const int64_t now = currentUnixMs();
-  SessionSerializer ser(rgman);
+  // Collect gids of all RGs that should remain in the table after this save.
+  std::vector<a2_gid_t> liveGids;
+  liveGids.reserve(rgman->getRequestGroups().size() +
+                   rgman->getReservedGroups().size());
 
+  // Step 1: UPSERT each active + reserved RG. upsertTask preserves
+  // created_at and queue_position on conflict (Task 17), and the INSERT path
+  // appends via COALESCE(MAX(queue_position)+1, 0). No DELETE on existing
+  // rows means no CASCADE on task_progress.
+  for (const auto& rg : rgman->getRequestGroups()) {
+    upsertTask(rg);
+    liveGids.push_back(rg->getGID());
+  }
+  for (const auto& rg : rgman->getReservedGroups()) {
+    upsertTask(rg);
+    liveGids.push_back(rg->getGID());
+  }
+
+  // Step 2: orphan removal. Any task row whose gid is no longer in the
+  // active+reserved set represents a completed/removed task; CASCADE on
+  // its task_progress is correct (the task is gone, its progress should
+  // be gone too).
+  removeOrphanTasks(liveGids);
+}
+
+void Sqlite3SessionStore::removeOrphanTasks(
+    const std::vector<a2_gid_t>& liveGids)
+{
   sqlite3* db = store_->raw();
 
   store_->withTransaction([&]() {
-    // 1) DELETE FROM task
-    if (sqlite3_exec(db, "DELETE FROM task", nullptr, nullptr, nullptr) !=
-        SQLITE_OK) {
-      throw DL_ABORT_EX(
-          fmt("sqlite3-persistence: DELETE FROM task failed: %s",
-              sqlite3_errmsg(db)));
-    }
-
-    // 2) Prepare INSERT statement
-    StmtGuard stmt;
-    if (sqlite3_prepare_v2(db, kInsertTaskSql, -1, &stmt.stmt, nullptr) !=
-        SQLITE_OK) {
-      throw DL_ABORT_EX(
-          fmt("sqlite3-persistence: prepare INSERT task failed: %s",
-              sqlite3_errmsg(db)));
-    }
-
-    int pos = 0;
-
-    auto handleRG = [&](const std::shared_ptr<RequestGroup>& rg) {
-      std::string text = ser.renderOne(rg);
-      if (text.empty()) {
-        return; // RG was skipped by serializer
-      }
-      std::string state = rg->isPauseRequested() ? "paused" : "waiting";
-
-      // Compute digest for dirty-skip in future tasks.
-      auto md = MessageDigest::sha1();
-      md->update(text.data(), text.size());
-      md->update(state.data(), state.size());
-      std::string digest = md->digest();
-
-      auto gidHex = GroupId::toHex(rg->getGID());
-
-      sqlite3_bind_text(stmt, 1, gidHex.data(),
-                        static_cast<int>(gidHex.size()), SQLITE_TRANSIENT);
-      sqlite3_bind_text(stmt, 2, state.data(),
-                        static_cast<int>(state.size()), SQLITE_TRANSIENT);
-      sqlite3_bind_text(stmt, 3, text.data(),
-                        static_cast<int>(text.size()), SQLITE_TRANSIENT);
-      sqlite3_bind_int(stmt, 4, pos++);
-      sqlite3_bind_blob(stmt, 5, digest.data(),
-                        static_cast<int>(digest.size()), SQLITE_TRANSIENT);
-      sqlite3_bind_int64(stmt, 6, static_cast<sqlite3_int64>(now));
-      sqlite3_bind_int64(stmt, 7, static_cast<sqlite3_int64>(now));
-
-      if (sqlite3_step(stmt) != SQLITE_DONE) {
+    if (liveGids.empty()) {
+      // No live tasks → delete all task rows.
+      if (sqlite3_exec(db, "DELETE FROM task", nullptr, nullptr, nullptr) !=
+          SQLITE_OK) {
         throw DL_ABORT_EX(
-            fmt("sqlite3-persistence: INSERT task failed: %s",
+            fmt("sqlite3-persistence: DELETE FROM task failed: %s",
                 sqlite3_errmsg(db)));
       }
-      sqlite3_reset(stmt);
-      sqlite3_clear_bindings(stmt);
-    };
-
-    for (const auto& rg : rgman->getRequestGroups()) {
-      handleRG(rg);
+      return;
     }
-    for (const auto& rg : rgman->getReservedGroups()) {
-      handleRG(rg);
+
+    // Build "DELETE FROM task WHERE gid NOT IN (?, ?, ...)" with N
+    // placeholders.
+    std::string sql = "DELETE FROM task WHERE gid NOT IN (";
+    for (size_t i = 0; i < liveGids.size(); ++i) {
+      sql += (i == 0 ? "?" : ", ?");
+    }
+    sql += ")";
+
+    StmtGuard stmt;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt.stmt, nullptr) !=
+        SQLITE_OK) {
+      throw DL_ABORT_EX(
+          fmt("sqlite3-persistence: prepare orphan DELETE failed: %s",
+              sqlite3_errmsg(db)));
+    }
+
+    // gidHex strings must outlive the bind/step pair. Hold them in a vector.
+    std::vector<std::string> gidHexHolder;
+    gidHexHolder.reserve(liveGids.size());
+    for (auto gid : liveGids) {
+      gidHexHolder.push_back(GroupId::toHex(gid));
+    }
+    for (size_t i = 0; i < gidHexHolder.size(); ++i) {
+      sqlite3_bind_text(stmt, static_cast<int>(i + 1),
+                        gidHexHolder[i].data(),
+                        static_cast<int>(gidHexHolder[i].size()),
+                        SQLITE_STATIC);
+    }
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+      throw DL_ABORT_EX(
+          fmt("sqlite3-persistence: orphan DELETE failed: %s",
+              sqlite3_errmsg(db)));
     }
   });
 }

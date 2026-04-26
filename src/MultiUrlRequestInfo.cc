@@ -304,6 +304,21 @@ int MultiUrlRequestInfo::prepare()
     if (useSignalHandler_) {
       setupSignalHandlers();
     }
+#ifdef HAVE_SQLITE3
+    // Pre-flight: write the initial task table so subsequent task_progress
+    // UPSERTs (which CASCADE FK to task) can find their parent rows.
+    if (auto* sessionStore = e_->getSqlite3SessionStore()) {
+      try {
+        sessionStore->saveAllTasks(e_->getRequestGroupMan().get());
+      }
+      catch (RecoverableException& ex) {
+        A2_LOG_WARN_EX("sqlite3-persistence: startup save failed; "
+                       "task_progress writes may FK-fail until next periodic "
+                       "save",
+                       ex);
+      }
+    }
+#endif // HAVE_SQLITE3
     e_->getRequestGroupMan()->getNetStat().downloadStart();
   }
   catch (RecoverableException& e) {

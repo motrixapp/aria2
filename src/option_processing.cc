@@ -310,6 +310,9 @@ error_code::Value option_processing(Option& op, bool standalone,
 #ifdef ENABLE_METALINK
       op.blank(PREF_METALINK_FILE) &&
 #endif // ENABLE_METALINK
+#ifdef HAVE_SQLITE3
+      !op.getAsBool(PREF_ENABLE_SQLITE3_PERSISTENCE) &&
+#endif // HAVE_SQLITE3
       op.blank(PREF_INPUT_FILE)) {
     if (uris.empty()) {
       global::cerr()->printf(MSG_URI_REQUIRED);

@@ -42,6 +42,8 @@
 #include <memory>
 #include <vector>
 
+#include "GroupId.h"
+
 namespace aria2 {
 
 class Option;
@@ -82,6 +84,8 @@ public:
 
 private:
   Sqlite3PersistenceStore* store_;
+
+  void removeOrphanTasks(const std::vector<a2_gid_t>& liveGids);
 };
 
 } // namespace aria2
