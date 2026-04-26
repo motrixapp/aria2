@@ -73,6 +73,9 @@
 #ifdef ENABLE_WEBSOCKET
 #  include "WebSocketSessionMan.h"
 #endif // ENABLE_WEBSOCKET
+#ifdef HAVE_SQLITE3
+#  include "Sqlite3PersistenceStore.h"
+#endif // HAVE_SQLITE3
 #include "Option.h"
 #include "util_security.h"
 
@@ -112,7 +115,14 @@ DownloadEngine::DownloadEngine(std::unique_ptr<EventPoll> eventPoll)
   sessionId_.assign(&sessionId[0], &sessionId[sizeof(sessionId)]);
 }
 
-DownloadEngine::~DownloadEngine() {}
+DownloadEngine::~DownloadEngine()
+{
+#ifdef HAVE_SQLITE3
+  if (sqlite3Store_) {
+    sqlite3Store_->finalCheckpointAndClose();
+  }
+#endif // HAVE_SQLITE3
+}
 
 namespace {
 void executeCommand(std::deque<std::unique_ptr<Command>>& commands,
@@ -603,6 +613,14 @@ void DownloadEngine::setCheckIntegrityMan(
 {
   checkIntegrityMan_ = std::move(ciman);
 }
+
+#ifdef HAVE_SQLITE3
+void DownloadEngine::setSqlite3Store(
+    std::unique_ptr<Sqlite3PersistenceStore> store)
+{
+  sqlite3Store_ = std::move(store);
+}
+#endif // HAVE_SQLITE3
 
 #ifdef ENABLE_WEBSOCKET
 void DownloadEngine::setWebSocketSessionMan(

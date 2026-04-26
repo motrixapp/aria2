@@ -74,6 +74,10 @@ class WebSocketSessionMan;
 } // namespace rpc
 #endif // ENABLE_WEBSOCKET
 
+#ifdef HAVE_SQLITE3
+class Sqlite3PersistenceStore;
+#endif // HAVE_SQLITE3
+
 namespace util {
 namespace security {
 class HMAC;
@@ -144,6 +148,10 @@ private:
 #ifdef ENABLE_WEBSOCKET
   std::unique_ptr<rpc::WebSocketSessionMan> webSocketSessionMan_;
 #endif // ENABLE_WEBSOCKET
+
+#ifdef HAVE_SQLITE3
+  std::unique_ptr<Sqlite3PersistenceStore> sqlite3Store_;
+#endif // HAVE_SQLITE3
 
   /**
    * Delegates to StatCalc
@@ -330,6 +338,11 @@ public:
     return webSocketSessionMan_;
   }
 #endif // ENABLE_WEBSOCKET
+
+#ifdef HAVE_SQLITE3
+  void setSqlite3Store(std::unique_ptr<Sqlite3PersistenceStore> store);
+  Sqlite3PersistenceStore* getSqlite3Store() const { return sqlite3Store_.get(); }
+#endif // HAVE_SQLITE3
 
   bool validateToken(const std::string& token);
 };
