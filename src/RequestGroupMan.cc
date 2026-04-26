@@ -90,6 +90,7 @@
 #endif // ENABLE_BITTORRENT
 #ifdef HAVE_SQLITE3
 #  include "Sqlite3DownloadResultRepository.h"
+#  include "Sqlite3SessionStore.h"
 #endif // HAVE_SQLITE3
 
 namespace aria2 {
@@ -459,6 +460,18 @@ public:
       else {
         std::shared_ptr<DownloadResult> dr = group->createDownloadResult();
         e_->getRequestGroupMan()->addDownloadResult(dr);
+#ifdef HAVE_SQLITE3
+        if (auto* ss = e_->getSqlite3SessionStore()) {
+          try {
+            if (!group->getOption()->getAsBool(PREF_FORCE_SAVE)) {
+              ss->deleteTask(GroupId::toHex(group->getGID()));
+            }
+          }
+          catch (RecoverableException& ex) {
+            A2_LOG_ERROR_EX("sqlite3-persistence: deleteTask failed", ex);
+          }
+        }
+#endif // HAVE_SQLITE3
         executeStopHook(group, e_->getOption(), dr->result);
         group->releaseRuntimeResource(e_);
       }
