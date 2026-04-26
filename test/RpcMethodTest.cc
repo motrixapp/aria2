@@ -30,6 +30,7 @@
 #ifdef HAVE_SQLITE3
 #  include <sqlite3.h>
 #  include "Sqlite3PersistenceStore.h"
+#  include "Sqlite3SessionStore.h"
 #endif // HAVE_SQLITE3
 
 namespace aria2 {
@@ -92,6 +93,7 @@ class RpcMethodTest : public CppUnit::TestFixture {
 #ifdef HAVE_SQLITE3
   CPPUNIT_TEST(testSaveSessionRpcWritesBothBackends);
   CPPUNIT_TEST(testChangeOptionPersistsToDb);
+  CPPUNIT_TEST(testChangePositionPersistsOrder);
 #endif // HAVE_SQLITE3
   CPPUNIT_TEST_SUITE_END();
 
@@ -166,6 +168,7 @@ public:
 #ifdef HAVE_SQLITE3
   void testSaveSessionRpcWritesBothBackends();
   void testChangeOptionPersistsToDb();
+  void testChangePositionPersistsOrder();
 #endif // HAVE_SQLITE3
 };
 
@@ -1519,6 +1522,77 @@ void RpcMethodTest::testSaveSessionRpcWritesBothBackends()
 }
 #endif // HAVE_SQLITE3
 
+
+#ifdef HAVE_SQLITE3
+void RpcMethodTest::testChangePositionPersistsOrder()
+{
+  std::string dbPath =
+      std::string(A2_TEST_OUT_DIR) + "/change_position_persists.db";
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+
+  auto store = make_unique<Sqlite3PersistenceStore>(dbPath);
+  store->open();
+  auto* storePtr = store.get();
+  e_->setSqlite3Store(std::move(store));
+
+  // Add 5 reserved RGs in order; record their gids.
+  std::vector<a2_gid_t> gids;
+  for (int i = 0; i < 5; ++i) {
+    auto dctx = std::make_shared<DownloadContext>(0, 0, "");
+    dctx->getFirstFileEntry()->addUri(
+        std::string("http://example.com/file") + util::itos(i));
+    auto rg = std::make_shared<RequestGroup>(GroupId::create(), option_);
+    rg->setDownloadContext(dctx);
+    e_->getRequestGroupMan()->addReservedGroup(rg);
+    gids.push_back(rg->getGID());
+  }
+
+  // Pre-seed the task table so every gid has a row at queue_position 0..4.
+  if (auto* ss = e_->getSqlite3SessionStore()) {
+    ss->saveAllTasks(e_->getRequestGroupMan().get());
+  }
+
+  // Invoke changePosition: move task at index 2 (gids[2]) to position 0 (POS_SET).
+  ChangePositionRpcMethod m;
+  auto req = createReq(ChangePositionRpcMethod::getMethodName());
+  req.params->append(GroupId::toHex(gids[2]));
+  req.params->append(Integer::g(0));
+  req.params->append(String::g("POS_SET"));
+  auto res = m.execute(std::move(req), e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+
+  // Expected order after move: gids[2], gids[0], gids[1], gids[3], gids[4]
+  std::vector<std::string> expected = {
+      GroupId::toHex(gids[2]), GroupId::toHex(gids[0]),
+      GroupId::toHex(gids[1]), GroupId::toHex(gids[3]),
+      GroupId::toHex(gids[4])};
+
+  sqlite3_stmt* stmt = nullptr;
+  CPPUNIT_ASSERT_EQUAL(
+      SQLITE_OK,
+      sqlite3_prepare_v2(storePtr->raw(),
+                         "SELECT gid FROM task ORDER BY queue_position ASC", -1,
+                         &stmt, nullptr));
+  std::vector<std::string> dbOrder;
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    std::string gidHex(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)),
+                       static_cast<size_t>(sqlite3_column_bytes(stmt, 0)));
+    dbOrder.push_back(gidHex);
+  }
+  sqlite3_finalize(stmt);
+
+  CPPUNIT_ASSERT_EQUAL(expected.size(), dbOrder.size());
+  for (size_t i = 0; i < expected.size(); ++i) {
+    CPPUNIT_ASSERT_EQUAL(expected[i], dbOrder[i]);
+  }
+
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+}
+#endif // HAVE_SQLITE3
 
 #ifdef HAVE_SQLITE3
 void RpcMethodTest::testChangeOptionPersistsToDb()

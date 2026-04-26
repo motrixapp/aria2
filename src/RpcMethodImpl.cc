@@ -1292,6 +1292,16 @@ ChangePositionRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
   }
   size_t destPos =
       e->getRequestGroupMan()->changeReservedGroupPosition(gid, pos, how);
+#ifdef HAVE_SQLITE3
+  if (auto* ss = e->getSqlite3SessionStore()) {
+    try {
+      ss->moveTaskPosition(GroupId::toHex(gid), static_cast<int>(destPos));
+    }
+    catch (RecoverableException& ex) {
+      A2_LOG_ERROR_EX("sqlite3-persistence: changePosition persist failed", ex);
+    }
+  }
+#endif // HAVE_SQLITE3
   return Integer::g(destPos);
 }
 
