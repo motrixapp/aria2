@@ -40,6 +40,10 @@
 #include "fmt.h"
 #include "LogFactory.h"
 #include "Option.h"
+#ifdef HAVE_SQLITE3
+#  include "Sqlite3SessionStore.h"
+#endif // HAVE_SQLITE3
+#include "RecoverableException.h"
 
 namespace aria2 {
 
@@ -61,31 +65,42 @@ void SaveSessionCommand::preProcess()
 
 void SaveSessionCommand::process()
 {
+  auto& rgman = getDownloadEngine()->getRequestGroupMan();
+
   const std::string& filename =
       getDownloadEngine()->getOption()->get(PREF_SAVE_SESSION);
   if (!filename.empty()) {
-    auto& rgman = getDownloadEngine()->getRequestGroupMan();
-
     SessionSerializer sessionSerializer(rgman.get());
 
     auto sessionHash = sessionSerializer.calculateHash();
     if (rgman->getLastSessionHash() == sessionHash) {
       A2_LOG_INFO("No change since last serialization or startup. "
                   "No serialization is necessary this time.");
-      return;
-    }
-
-    rgman->setLastSessionHash(std::move(sessionHash));
-
-    if (sessionSerializer.save(filename)) {
-      A2_LOG_NOTICE(
-          fmt(_("Serialized session to '%s' successfully."), filename.c_str()));
     }
     else {
-      A2_LOG_ERROR(
-          fmt(_("Failed to serialize session to '%s'."), filename.c_str()));
+      rgman->setLastSessionHash(std::move(sessionHash));
+
+      if (sessionSerializer.save(filename)) {
+        A2_LOG_NOTICE(fmt(_("Serialized session to '%s' successfully."),
+                          filename.c_str()));
+      }
+      else {
+        A2_LOG_ERROR(fmt(_("Failed to serialize session to '%s'."),
+                         filename.c_str()));
+      }
     }
   }
+
+#ifdef HAVE_SQLITE3
+  if (auto* sessionStore = getDownloadEngine()->getSqlite3SessionStore()) {
+    try {
+      sessionStore->saveAllTasks(rgman.get());
+    }
+    catch (RecoverableException& ex) {
+      A2_LOG_ERROR_EX("sqlite3-persistence: periodic save failed", ex);
+    }
+  }
+#endif // HAVE_SQLITE3
 }
 
 } // namespace aria2

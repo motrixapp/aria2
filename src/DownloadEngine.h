@@ -76,6 +76,7 @@ class WebSocketSessionMan;
 
 #ifdef HAVE_SQLITE3
 class Sqlite3PersistenceStore;
+class Sqlite3SessionStore;
 #endif // HAVE_SQLITE3
 
 namespace util {
@@ -151,6 +152,7 @@ private:
 
 #ifdef HAVE_SQLITE3
   std::unique_ptr<Sqlite3PersistenceStore> sqlite3Store_;
+  std::unique_ptr<Sqlite3SessionStore> sqlite3SessionStoreCache_;
 #endif // HAVE_SQLITE3
 
   /**
@@ -342,6 +344,7 @@ public:
 #ifdef HAVE_SQLITE3
   void setSqlite3Store(std::unique_ptr<Sqlite3PersistenceStore> store);
   Sqlite3PersistenceStore* getSqlite3Store() const { return sqlite3Store_.get(); }
+  Sqlite3SessionStore* getSqlite3SessionStore();
 #endif // HAVE_SQLITE3
 
   bool validateToken(const std::string& token);

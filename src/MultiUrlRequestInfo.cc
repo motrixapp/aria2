@@ -48,6 +48,7 @@
 #include "DownloadEngineFactory.h"
 #ifdef HAVE_SQLITE3
 #  include "Sqlite3PersistenceStore.h"
+#  include "Sqlite3SessionStore.h"
 #endif // HAVE_SQLITE3
 #include "RecoverableException.h"
 #include "message.h"
@@ -358,6 +359,17 @@ error_code::Value MultiUrlRequestInfo::getResult()
           fmt(_("Failed to serialize session to '%s'."), filename.c_str()));
     }
   }
+#ifdef HAVE_SQLITE3
+  if (auto* sessionStore = e_->getSqlite3SessionStore()) {
+    try {
+      sessionStore->saveAllTasks(e_->getRequestGroupMan().get());
+      A2_LOG_NOTICE("sqlite3-persistence: flushed task table on exit.");
+    }
+    catch (RecoverableException& ex) {
+      A2_LOG_ERROR_EX("sqlite3-persistence: final flush failed", ex);
+    }
+  }
+#endif // HAVE_SQLITE3
   SingletonHolder<Notifier>::clear();
   return returnValue;
 }

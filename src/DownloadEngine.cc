@@ -75,6 +75,7 @@
 #endif // ENABLE_WEBSOCKET
 #ifdef HAVE_SQLITE3
 #  include "Sqlite3PersistenceStore.h"
+#  include "Sqlite3SessionStore.h"
 #endif // HAVE_SQLITE3
 #include "Option.h"
 #include "util_security.h"
@@ -118,6 +119,7 @@ DownloadEngine::DownloadEngine(std::unique_ptr<EventPoll> eventPoll)
 DownloadEngine::~DownloadEngine()
 {
 #ifdef HAVE_SQLITE3
+  sqlite3SessionStoreCache_.reset();
   if (sqlite3Store_) {
     sqlite3Store_->finalCheckpointAndClose();
   }
@@ -619,6 +621,18 @@ void DownloadEngine::setSqlite3Store(
     std::unique_ptr<Sqlite3PersistenceStore> store)
 {
   sqlite3Store_ = std::move(store);
+}
+
+Sqlite3SessionStore* DownloadEngine::getSqlite3SessionStore()
+{
+  if (!sqlite3Store_) {
+    return nullptr;
+  }
+  if (!sqlite3SessionStoreCache_) {
+    sqlite3SessionStoreCache_ =
+        make_unique<Sqlite3SessionStore>(sqlite3Store_.get());
+  }
+  return sqlite3SessionStoreCache_.get();
 }
 #endif // HAVE_SQLITE3
 
