@@ -60,6 +60,7 @@ SRCS =  \
 	CreateRequestCommand.cc CreateRequestCommand.h\
 	crypto_endian.h\
 	CUIDCounter.cc CUIDCounter.h\
+	BtProgressInfoFileFactory.cc BtProgressInfoFileFactory.h\
 	DefaultAuthResolver.cc DefaultAuthResolver.h\
 	DefaultBtProgressInfoFile.cc DefaultBtProgressInfoFile.h\
 	DefaultDiskWriter.cc DefaultDiskWriter.h\
