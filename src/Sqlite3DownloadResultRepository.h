@@ -40,9 +40,12 @@
 #ifdef HAVE_SQLITE3
 
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
+
+#include "GroupId.h"
 
 namespace aria2 {
 
@@ -77,7 +80,21 @@ public:
   // download_history_files (one row per fileEntry), and
   // download_history_file_uris (one row per URI on each fileEntry).
   // Single transaction; partial failure rolls back the whole 3-table write.
+  // Drains pendingHistoryWrites_ (best-effort) before inserting dr.
   void insert(const std::shared_ptr<DownloadResult>& dr);
+
+  // Deletes the row in download_history matching gid.  CASCADE removes
+  // child rows in download_history_files and download_history_file_uris.
+  // Returns true if at least one row was deleted.
+  bool deleteByGid(a2_gid_t gid);
+
+  // Deletes all rows from download_history (and cascaded children).
+  // Also discards any pending writes.
+  void purgeAll();
+
+  // Appends dr to the pending-retry queue.  If the queue exceeds
+  // kMaxPendingWrites entries the oldest entry is dropped to bound growth.
+  void enqueuePending(const std::shared_ptr<DownloadResult>& dr);
 
   // Returns total count of rows in download_history.
   int64_t countAll() const;
@@ -102,7 +119,15 @@ public:
   void trimToCap(int historyLimit, bool keepUnfinished);
 
 private:
+  // Actual 3-table INSERT logic; called by insert() and the drain loop.
+  void doInsert(const std::shared_ptr<DownloadResult>& dr);
+
   Sqlite3PersistenceStore* store_;
+
+  // Pending writes that failed a previous insert attempt.
+  std::deque<std::shared_ptr<DownloadResult>> pendingHistoryWrites_;
+
+  static constexpr size_t kMaxPendingWrites = 1024;
 };
 
 } // namespace aria2

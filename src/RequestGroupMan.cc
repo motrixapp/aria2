@@ -88,6 +88,9 @@
 #ifdef ENABLE_BITTORRENT
 #  include "bittorrent_helper.h"
 #endif // ENABLE_BITTORRENT
+#ifdef HAVE_SQLITE3
+#  include "Sqlite3DownloadResultRepository.h"
+#endif // HAVE_SQLITE3
 
 namespace aria2 {
 
@@ -911,7 +914,21 @@ RequestGroupMan::findDownloadResult(a2_gid_t gid) const
 
 bool RequestGroupMan::removeDownloadResult(a2_gid_t gid)
 {
-  return downloadResults_.remove(gid);
+  bool memSuccess = downloadResults_.remove(gid);
+#ifdef HAVE_SQLITE3
+  bool dbSuccess = false;
+  if (repo_) {
+    try {
+      dbSuccess = repo_->deleteByGid(gid);
+    }
+    catch (RecoverableException&) {
+      dbSuccess = false;
+    }
+  }
+  return memSuccess || dbSuccess;
+#else
+  return memSuccess;
+#endif
 }
 
 void RequestGroupMan::addDownloadResult(
@@ -939,9 +956,44 @@ void RequestGroupMan::addDownloadResult(
     }
     downloadResults_.pop_front();
   }
+#ifdef HAVE_SQLITE3
+  if (repo_) {
+    bool inserted = false;
+    try {
+      repo_->insert(dr);
+      inserted = true;
+    }
+    catch (RecoverableException& e) {
+      A2_LOG_ERROR_EX("sqlite3-persistence: history insert failed; queued for retry",
+                      e);
+      repo_->enqueuePending(dr);
+    }
+    if (inserted) {
+      try {
+        repo_->trimToCap(option_->getAsInt(PREF_SQLITE3_HISTORY_LIMIT),
+                         option_->getAsBool(PREF_KEEP_UNFINISHED_DOWNLOAD_RESULT));
+      }
+      catch (RecoverableException& e) {
+        A2_LOG_ERROR_EX("sqlite3-persistence: history trim failed", e);
+      }
+    }
+  }
+#endif
 }
 
-void RequestGroupMan::purgeDownloadResult() { downloadResults_.clear(); }
+void RequestGroupMan::purgeDownloadResult()
+{
+  downloadResults_.clear();
+#ifdef HAVE_SQLITE3
+  if (repo_) {
+    try {
+      repo_->purgeAll();
+    }
+    catch (RecoverableException&) {
+    }
+  }
+#endif
+}
 
 std::shared_ptr<ServerStat>
 RequestGroupMan::findServerStat(const std::string& hostname,

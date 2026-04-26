@@ -36,6 +36,7 @@
 
 #ifdef HAVE_SQLITE3
 
+#include <algorithm>
 #include <cstdlib>
 
 #include <sqlite3.h>
@@ -63,6 +64,9 @@ class Sqlite3DownloadResultRepositoryTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testSearchByInfoHash);
   CPPUNIT_TEST(testCountWithFilter);
   CPPUNIT_TEST(testReconstructedDrHasFullUris);
+  CPPUNIT_TEST(testDeleteByGid);
+  CPPUNIT_TEST(testPurgeAll);
+  CPPUNIT_TEST(testEnqueuePendingRetriesOnNextInsert);
   CPPUNIT_TEST_SUITE_END();
 
 private:
@@ -133,6 +137,9 @@ public:
   void testSearchByInfoHash();
   void testCountWithFilter();
   void testReconstructedDrHasFullUris();
+  void testDeleteByGid();
+  void testPurgeAll();
+  void testEnqueuePendingRetriesOnNextInsert();
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION(Sqlite3DownloadResultRepositoryTest);
@@ -450,6 +457,88 @@ void Sqlite3DownloadResultRepositoryTest::testReconstructedDrHasFullUris()
                         rfe->getSpentUris()[0]);
   CPPUNIT_ASSERT_EQUAL(std::string("http://waiting.example.com/test.bin"),
                         rfe->getRemainingUris()[0]);
+}
+
+void Sqlite3DownloadResultRepositoryTest::testDeleteByGid()
+{
+  Sqlite3DownloadResultRepository repo(store_.get());
+
+  // Insert 2 DRs
+  auto dr1 = makeDr(error_code::FINISHED);
+  auto dr2 = makeDr(error_code::FINISHED);
+  repo.insert(dr1);
+  repo.insert(dr2);
+  CPPUNIT_ASSERT_EQUAL(static_cast<int64_t>(2), repo.countAll());
+
+  // Delete dr1 by gid — should return true and leave dr2
+  bool deleted = repo.deleteByGid(dr1->gid->getNumericId());
+  CPPUNIT_ASSERT_EQUAL(true, deleted);
+  CPPUNIT_ASSERT_EQUAL(static_cast<int64_t>(1), repo.countAll());
+
+  // Deleting a non-existent gid should return false
+  bool notFound = repo.deleteByGid(dr1->gid->getNumericId());
+  CPPUNIT_ASSERT_EQUAL(false, notFound);
+  CPPUNIT_ASSERT_EQUAL(static_cast<int64_t>(1), repo.countAll());
+}
+
+void Sqlite3DownloadResultRepositoryTest::testPurgeAll()
+{
+  Sqlite3DownloadResultRepository repo(store_.get());
+
+  // Insert 3 DRs
+  repo.insert(makeDr(error_code::FINISHED));
+  repo.insert(makeDr(error_code::FINISHED));
+  repo.insert(makeDr(error_code::UNKNOWN_ERROR));
+  CPPUNIT_ASSERT_EQUAL(static_cast<int64_t>(3), repo.countAll());
+
+  repo.purgeAll();
+
+  CPPUNIT_ASSERT_EQUAL(static_cast<int64_t>(0), repo.countAll());
+}
+
+void Sqlite3DownloadResultRepositoryTest::testEnqueuePendingRetriesOnNextInsert()
+{
+  Sqlite3DownloadResultRepository repo(store_.get());
+
+  // Insert dr1 normally to populate DB
+  auto dr1 = makeDr(error_code::FINISHED);
+  repo.insert(dr1);
+  CPPUNIT_ASSERT_EQUAL(static_cast<int64_t>(1), repo.countAll());
+
+  // Manually enqueue dr2 as pending (simulates a failed insert)
+  auto dr2 = makeDr(error_code::FINISHED);
+  repo.enqueuePending(dr2);
+
+  // Insert dr3 — drain should insert dr2, then insert dr3
+  auto dr3 = makeDr(error_code::FINISHED);
+  repo.insert(dr3);
+
+  // All 3 should be in DB now
+  CPPUNIT_ASSERT_EQUAL(static_cast<int64_t>(3), repo.countAll());
+
+  // Record GID hex strings before releasing the GroupId shared_ptrs.
+  // GroupId::import() rejects GIDs still registered in the active set, so we
+  // must let the GIDs go out of scope (simulating completed downloads) before
+  // reading back from the DB.
+  std::string hex1 = dr1->gid->toHex();
+  std::string hex2 = dr2->gid->toHex();
+  std::string hex3 = dr3->gid->toHex();
+  dr1->gid.reset();
+  dr2->gid.reset();
+  dr3->gid.reset();
+
+  // Verify gids are present
+  auto results = repo.range(0, 10, false);
+  CPPUNIT_ASSERT_EQUAL(static_cast<size_t>(3), results.size());
+
+  std::vector<std::string> gids;
+  for (const auto& r : results) {
+    CPPUNIT_ASSERT(r->gid != nullptr);
+    gids.push_back(r->gid->toHex());
+  }
+  CPPUNIT_ASSERT(std::find(gids.begin(), gids.end(), hex1) != gids.end());
+  CPPUNIT_ASSERT(std::find(gids.begin(), gids.end(), hex2) != gids.end());
+  CPPUNIT_ASSERT(std::find(gids.begin(), gids.end(), hex3) != gids.end());
 }
 
 } // namespace aria2

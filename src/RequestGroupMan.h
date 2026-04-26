@@ -61,6 +61,9 @@ class OutputFile;
 class UriListParser;
 class WrDiskCache;
 class OpenedFileCounter;
+#ifdef HAVE_SQLITE3
+class Sqlite3DownloadResultRepository;
+#endif // HAVE_SQLITE3
 
 typedef IndexedList<a2_gid_t, std::shared_ptr<RequestGroup>> RequestGroupList;
 typedef IndexedList<a2_gid_t, std::shared_ptr<DownloadResult>>
@@ -129,6 +132,12 @@ private:
 
   // SHA1 hash value of the content of last session serialization.
   std::string lastSessionHash_;
+
+#ifdef HAVE_SQLITE3
+  // Non-owning pointer to the download-result repository.  Owned by
+  // MultiUrlRequestInfo so its lifetime covers the whole session.
+  Sqlite3DownloadResultRepository* repo_ = nullptr;
+#endif // HAVE_SQLITE3
 
   void formatDownloadResultFull(
       OutputFile& out, const char* status,
@@ -366,6 +375,11 @@ public:
   }
 
   void decreaseNumActive();
+
+#ifdef HAVE_SQLITE3
+  void setRepository(Sqlite3DownloadResultRepository* r) { repo_ = r; }
+  Sqlite3DownloadResultRepository* getRepository() const { return repo_; }
+#endif // HAVE_SQLITE3
 };
 
 } // namespace aria2

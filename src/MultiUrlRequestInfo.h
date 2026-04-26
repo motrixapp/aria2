@@ -53,6 +53,7 @@ class UriListParser;
 class DownloadEngine;
 #ifdef HAVE_SQLITE3
 class Sqlite3PersistenceStore;
+class Sqlite3DownloadResultRepository;
 #endif // HAVE_SQLITE3
 
 class MultiUrlRequestInfo {
@@ -67,6 +68,7 @@ private:
 
 #ifdef HAVE_SQLITE3
   std::unique_ptr<Sqlite3PersistenceStore> sqlite3Store_;
+  std::unique_ptr<Sqlite3DownloadResultRepository> sqlite3Repo_;
 #endif // HAVE_SQLITE3
 
   sigset_t mask_;

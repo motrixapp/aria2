@@ -49,6 +49,7 @@
 #ifdef HAVE_SQLITE3
 #  include "Sqlite3PersistenceStore.h"
 #  include "Sqlite3SessionStore.h"
+#  include "Sqlite3DownloadResultRepository.h"
 #endif // HAVE_SQLITE3
 #include "RecoverableException.h"
 #include "message.h"
@@ -221,6 +222,10 @@ int MultiUrlRequestInfo::prepare()
 #ifdef HAVE_SQLITE3
     if (sqlite3Store_) {
       e_->setSqlite3Store(std::move(sqlite3Store_));
+    }
+    if (auto* store = e_->getSqlite3Store()) {
+      sqlite3Repo_ = make_unique<Sqlite3DownloadResultRepository>(store);
+      e_->getRequestGroupMan()->setRepository(sqlite3Repo_.get());
     }
 #endif // HAVE_SQLITE3
 

@@ -77,6 +77,9 @@ int64_t currentUnixMs()
           .count());
 }
 
+const char* const kDeleteByGidSql =
+    "DELETE FROM download_history WHERE gid = ?";
+
 const char* const kInsertHistorySql =
     "INSERT INTO download_history"
     " (gid, status, result_code, result_message, total_length, completed_length,"
@@ -439,6 +442,25 @@ Sqlite3DownloadResultRepository::~Sqlite3DownloadResultRepository() = default;
 void Sqlite3DownloadResultRepository::insert(
     const std::shared_ptr<DownloadResult>& dr)
 {
+  // Best-effort drain pending queue first.
+  while (!pendingHistoryWrites_.empty()) {
+    auto pending = pendingHistoryWrites_.front();
+    pendingHistoryWrites_.pop_front();
+    try {
+      doInsert(pending);
+    }
+    catch (RecoverableException&) {
+      // Re-enqueue and stop draining; we'll try again next time.
+      pendingHistoryWrites_.push_front(pending);
+      break;
+    }
+  }
+  doInsert(dr);
+}
+
+void Sqlite3DownloadResultRepository::doInsert(
+    const std::shared_ptr<DownloadResult>& dr)
+{
   // Status mapping (spec §8.5):
   //   FINISHED → "complete", REMOVED → "removed", else → "error"
   std::string status;
@@ -768,6 +790,52 @@ void Sqlite3DownloadResultRepository::trimToCap(int historyLimit,
               sqlite3_errmsg(db)));
     }
   });
+}
+
+bool Sqlite3DownloadResultRepository::deleteByGid(a2_gid_t gid)
+{
+  bool deleted = false;
+  store_->withTransaction([&]() {
+    StmtGuard stmt;
+    if (sqlite3_prepare_v2(store_->raw(), kDeleteByGidSql, -1, &stmt.stmt,
+                           nullptr) != SQLITE_OK) {
+      throw DL_ABORT_EX(
+          fmt("sqlite3-persistence: prepare DELETE history by gid failed: %s",
+              sqlite3_errmsg(store_->raw())));
+    }
+    auto gidHex = GroupId::toHex(gid);
+    sqlite3_bind_text(stmt, 1, gidHex.data(),
+                      static_cast<int>(gidHex.size()), SQLITE_STATIC);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+      throw DL_ABORT_EX(
+          fmt("sqlite3-persistence: DELETE history by gid failed: %s",
+              sqlite3_errmsg(store_->raw())));
+    }
+    deleted = (sqlite3_changes(store_->raw()) > 0);
+  });
+  return deleted;
+}
+
+void Sqlite3DownloadResultRepository::purgeAll()
+{
+  store_->withTransaction([&]() {
+    if (sqlite3_exec(store_->raw(), "DELETE FROM download_history",
+                     nullptr, nullptr, nullptr) != SQLITE_OK) {
+      throw DL_ABORT_EX(
+          fmt("sqlite3-persistence: purgeAll failed: %s",
+              sqlite3_errmsg(store_->raw())));
+    }
+    pendingHistoryWrites_.clear();
+  });
+}
+
+void Sqlite3DownloadResultRepository::enqueuePending(
+    const std::shared_ptr<DownloadResult>& dr)
+{
+  if (pendingHistoryWrites_.size() >= kMaxPendingWrites) {
+    pendingHistoryWrites_.pop_front();
+  }
+  pendingHistoryWrites_.push_back(dr);
 }
 
 } // namespace aria2
