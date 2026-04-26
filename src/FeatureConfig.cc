@@ -183,6 +183,14 @@ const char* strSupportedFeature(int feature)
 #endif // !HAVE_LIBSSH2
     break;
 
+  case (FEATURE_SQLITE3_PERSISTENCE):
+#ifdef HAVE_SQLITE3
+    return "SQLite3-Persistence";
+#else  // !HAVE_SQLITE3
+    return nullptr;
+#endif // !HAVE_SQLITE3
+    break;
+
   default:
     return nullptr;
   }
