@@ -37,9 +37,15 @@
 
 #include "common.h"
 
+#include <memory>
 #include <string>
 
 namespace aria2 {
+
+#ifdef ENABLE_BITTORRENT
+class BtRuntime;
+class PeerStorage;
+#endif
 
 class BtProgressInfoFile {
 public:
@@ -57,6 +63,11 @@ public:
 
   // re-set filename
   virtual void updateFilename() = 0;
+
+#ifdef ENABLE_BITTORRENT
+  virtual void setBtRuntime(const std::shared_ptr<BtRuntime>& btRuntime) {}
+  virtual void setPeerStorage(const std::shared_ptr<PeerStorage>& peerStorage) {}
+#endif
 };
 
 } // namespace aria2

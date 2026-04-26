@@ -88,9 +88,9 @@ public:
 
 #ifdef ENABLE_BITTORRENT
   // for torrents
-  void setPeerStorage(const std::shared_ptr<PeerStorage>& peerStorage);
+  void setPeerStorage(const std::shared_ptr<PeerStorage>& peerStorage) CXX11_OVERRIDE;
 
-  void setBtRuntime(const std::shared_ptr<BtRuntime>& btRuntime);
+  void setBtRuntime(const std::shared_ptr<BtRuntime>& btRuntime) CXX11_OVERRIDE;
 #endif // ENABLE_BITTORRENT
 
   static const std::string& getSuffix()
