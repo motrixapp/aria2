@@ -410,7 +410,8 @@ endif # HAVE_ZLIB
 if HAVE_SQLITE3
 SRCS += \
 	Sqlite3CookieParser.cc Sqlite3CookieParser.h\
-	Sqlite3CookieParserImpl.cc Sqlite3CookieParserImpl.h
+	Sqlite3CookieParserImpl.cc Sqlite3CookieParserImpl.h\
+	Sqlite3PersistenceStore.cc Sqlite3PersistenceStore.h
 endif # HAVE_SQLITE3
 
 if HAVE_LIBSSH2
