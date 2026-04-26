@@ -37,6 +37,8 @@
 #ifdef HAVE_SQLITE3
 
 #include <cstdlib>
+#include <set>
+#include <vector>
 
 #include <sqlite3.h>
 
@@ -57,6 +59,7 @@ namespace aria2 {
 class Sqlite3SessionStoreTest : public CppUnit::TestFixture {
   CPPUNIT_TEST_SUITE(Sqlite3SessionStoreTest);
   CPPUNIT_TEST(testSaveAllTasksUpsertsRows);
+  CPPUNIT_TEST(testSaveLoadRoundTrip);
   CPPUNIT_TEST_SUITE_END();
 
 private:
@@ -68,6 +71,7 @@ public:
   void setUp() override;
   void tearDown() override;
   void testSaveAllTasksUpsertsRows();
+  void testSaveLoadRoundTrip();
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION(Sqlite3SessionStoreTest);
@@ -149,6 +153,52 @@ void Sqlite3SessionStoreTest::testSaveAllTasksUpsertsRows()
     CPPUNIT_ASSERT_EQUAL(SQLITE_DONE, sqlite3_step(stmt));
     sqlite3_finalize(stmt);
   }
+}
+
+void Sqlite3SessionStoreTest::testSaveLoadRoundTrip()
+{
+  auto makeRG = [&](const std::string& uri) {
+    auto dctx = std::make_shared<DownloadContext>(0, 0, "");
+    dctx->getFirstFileEntry()->addUri(uri);
+    auto rg = std::make_shared<RequestGroup>(GroupId::create(), option_);
+    rg->setDownloadContext(dctx);
+    return rg;
+  };
+
+  a2_gid_t gid1, gid2;
+
+  // Save phase: create RGs, persist them, then release all references so
+  // the GroupId slots are freed before the load phase re-imports them.
+  {
+    auto rg1 = makeRG("http://example.com/file1.bin");
+    auto rg2 = makeRG("http://example.com/file2.bin");
+
+    gid1 = rg1->getGID();
+    gid2 = rg2->getGID();
+
+    RequestGroupMan rgman{std::vector<std::shared_ptr<RequestGroup>>(), 4,
+                          option_.get()};
+    rgman.addReservedGroup(rg1);
+    rgman.addReservedGroup(rg2);
+
+    Sqlite3SessionStore session(store_.get());
+    session.saveAllTasks(&rgman);
+  }
+  // At this point rg1, rg2, and rgman are destroyed; GroupId slots freed.
+
+  std::vector<std::shared_ptr<RequestGroup>> loaded;
+  Sqlite3SessionStore session(store_.get());
+  session.loadActiveTasksInto(loaded, option_);
+
+  CPPUNIT_ASSERT_EQUAL((size_t)2, loaded.size());
+
+  std::set<a2_gid_t> gotGids;
+  for (const auto& rg : loaded) {
+    gotGids.insert(rg->getGID());
+  }
+
+  std::set<a2_gid_t> wantGids{gid1, gid2};
+  CPPUNIT_ASSERT(gotGids == wantGids);
 }
 
 } // namespace aria2

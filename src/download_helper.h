@@ -37,6 +37,7 @@
 
 #include "common.h"
 
+#include <istream>
 #include <string>
 #include <vector>
 #include <set>
@@ -114,6 +115,12 @@ std::shared_ptr<UriListParser> openUriListParser(const std::string& filename);
 void createRequestGroupForUriList(
     std::vector<std::shared_ptr<RequestGroup>>& result,
     const std::shared_ptr<Option>& option);
+
+// Create RequestGroup objects by reading serialized session data from an
+// istream (e.g. a stringstream produced by Sqlite3SessionStore::loadActiveTasksInto).
+void createRequestGroupForUriList(
+    std::vector<std::shared_ptr<RequestGroup>>& result,
+    const std::shared_ptr<Option>& option, std::istream& in);
 
 // Create RequestGroup object using provided uris.  If ignoreLocalPath
 // is true, a path to torrent file and metalink file are ignored.  If

@@ -37,16 +37,19 @@
 #ifdef HAVE_SQLITE3
 
 #include <chrono>
+#include <sstream>
 
 #include <sqlite3.h>
 
 #include "DlAbortEx.h"
 #include "GroupId.h"
 #include "MessageDigest.h"
+#include "Option.h"
 #include "RequestGroup.h"
 #include "RequestGroupMan.h"
 #include "SessionSerializer.h"
 #include "Sqlite3PersistenceStore.h"
+#include "download_helper.h"
 #include "fmt.h"
 
 namespace aria2 {
@@ -78,6 +81,9 @@ const char* const kInsertTaskSql =
     "INSERT INTO task"
     " (gid, state, serialized, queue_position, digest, created_at, updated_at)"
     " VALUES (?, ?, ?, ?, ?, ?, ?)";
+
+const char* const kSelectSerializedSql =
+    "SELECT serialized FROM task ORDER BY queue_position ASC";
 
 } // namespace
 
@@ -158,6 +164,43 @@ void Sqlite3SessionStore::saveAllTasks(RequestGroupMan* rgman)
       handleRG(rg);
     }
   });
+}
+
+void Sqlite3SessionStore::loadActiveTasksInto(
+    std::vector<std::shared_ptr<RequestGroup>>& out,
+    const std::shared_ptr<Option>& op)
+{
+  sqlite3* db = store_->raw();
+
+  StmtGuard stmt;
+  if (sqlite3_prepare_v2(db, kSelectSerializedSql, -1, &stmt.stmt, nullptr) !=
+      SQLITE_OK) {
+    throw DL_ABORT_EX(
+        fmt("sqlite3-persistence: prepare SELECT serialized failed: %s",
+            sqlite3_errmsg(db)));
+  }
+
+  std::string combined;
+  int rc;
+  while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+    const char* text =
+        reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+    if (text) {
+      combined += text;
+    }
+  }
+  if (rc != SQLITE_DONE) {
+    throw DL_ABORT_EX(
+        fmt("sqlite3-persistence: SELECT serialized step failed: %s",
+            sqlite3_errmsg(db)));
+  }
+
+  if (combined.empty()) {
+    return;
+  }
+
+  std::stringstream ss(combined);
+  createRequestGroupForUriList(out, op, ss);
 }
 
 } // namespace aria2

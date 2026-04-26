@@ -35,6 +35,7 @@ SRCS =  \
 	BtProgressInfoFile.h\
 	BufferedFile.cc BufferedFile.h\
 	MemBufferIOFile.cc MemBufferIOFile.h\
+	MemBufferReader.cc MemBufferReader.h\
 	ByteArrayDiskWriter.cc ByteArrayDiskWriter.h\
 	ByteArrayDiskWriterFactory.h\
 	CheckIntegrityCommand.cc CheckIntegrityCommand.h\

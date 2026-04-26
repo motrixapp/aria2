@@ -35,10 +35,12 @@
 #include "download_helper.h"
 
 #include <algorithm>
+#include <iterator>
 #include <sstream>
 
 #include "RequestGroup.h"
 #include "Option.h"
+#include "MemBufferReader.h"
 #include "prefs.h"
 #include "Metalink2RequestGroup.h"
 #include "ProtocolDetector.h"
@@ -574,6 +576,18 @@ void createRequestGroupForUriList(
   auto uriListParser = openUriListParser(option->get(PREF_INPUT_FILE));
   while (createRequestGroupFromUriListParser(result, option.get(),
                                              uriListParser.get()))
+    ;
+}
+
+void createRequestGroupForUriList(
+    std::vector<std::shared_ptr<RequestGroup>>& result,
+    const std::shared_ptr<Option>& option, std::istream& in)
+{
+  std::string content{std::istreambuf_iterator<char>(in),
+                      std::istreambuf_iterator<char>()};
+  auto reader = make_unique<MemBufferReader>(std::move(content));
+  UriListParser parser(std::move(reader));
+  while (createRequestGroupFromUriListParser(result, option.get(), &parser))
     ;
 }
 

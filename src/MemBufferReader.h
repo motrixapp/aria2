@@ -32,46 +32,39 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#ifndef D_SQLITE3_SESSION_STORE_H
-#define D_SQLITE3_SESSION_STORE_H
+#ifndef D_MEM_BUFFER_READER_H
+#define D_MEM_BUFFER_READER_H
 
-#include "common.h"
+#include "IOFile.h"
 
-#ifdef HAVE_SQLITE3
-
-#include <memory>
-#include <vector>
+#include <string>
 
 namespace aria2 {
 
-class Option;
-class RequestGroup;
-class Sqlite3PersistenceStore;
-class RequestGroupMan;
-
-class Sqlite3SessionStore {
+// Read-only IOFile backed by an in-memory string buffer.
+// Write-side operations assert(0) and return failure (mirrors SHA1IOFile
+// in reverse).
+class MemBufferReader : public IOFile {
 public:
-  explicit Sqlite3SessionStore(Sqlite3PersistenceStore* store);
-  ~Sqlite3SessionStore();
+  explicit MemBufferReader(std::string buf);
 
-  Sqlite3SessionStore(const Sqlite3SessionStore&) = delete;
-  Sqlite3SessionStore& operator=(const Sqlite3SessionStore&) = delete;
-
-  // Wholesale rewrite: DELETE FROM task; then INSERT one row per active and
-  // reserved RG, in queue-position order, all in a single transaction.
-  void saveAllTasks(RequestGroupMan* rgman);
-
-  // Read task rows (ordered by queue_position ASC), concatenate their
-  // serialized blobs, and parse them into RequestGroup objects appended to out.
-  void loadActiveTasksInto(std::vector<std::shared_ptr<RequestGroup>>& out,
-                           const std::shared_ptr<Option>& op);
+protected:
+  virtual size_t onRead(void* ptr, size_t count) CXX11_OVERRIDE;
+  virtual size_t onWrite(const void* ptr, size_t count) CXX11_OVERRIDE;
+  virtual char* onGets(char* s, int size) CXX11_OVERRIDE;
+  virtual int onVprintf(const char* format, va_list va) CXX11_OVERRIDE;
+  virtual int onFlush() CXX11_OVERRIDE;
+  virtual int onClose() CXX11_OVERRIDE;
+  virtual bool onSupportsColor() CXX11_OVERRIDE;
+  virtual bool isError() const CXX11_OVERRIDE;
+  virtual bool isEOF() const CXX11_OVERRIDE;
+  virtual bool isOpen() const CXX11_OVERRIDE;
 
 private:
-  Sqlite3PersistenceStore* store_;
+  std::string buf_;
+  size_t pos_{0};
 };
 
 } // namespace aria2
 
-#endif // HAVE_SQLITE3
-
-#endif // D_SQLITE3_SESSION_STORE_H
+#endif // D_MEM_BUFFER_READER_H

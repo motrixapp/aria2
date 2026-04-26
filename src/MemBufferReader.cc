@@ -32,46 +32,72 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#ifndef D_SQLITE3_SESSION_STORE_H
-#define D_SQLITE3_SESSION_STORE_H
+#include "MemBufferReader.h"
 
-#include "common.h"
-
-#ifdef HAVE_SQLITE3
-
-#include <memory>
-#include <vector>
+#include <cassert>
+#include <cstring>
 
 namespace aria2 {
 
-class Option;
-class RequestGroup;
-class Sqlite3PersistenceStore;
-class RequestGroupMan;
+MemBufferReader::MemBufferReader(std::string buf)
+    : buf_(std::move(buf)), pos_(0)
+{
+}
 
-class Sqlite3SessionStore {
-public:
-  explicit Sqlite3SessionStore(Sqlite3PersistenceStore* store);
-  ~Sqlite3SessionStore();
+size_t MemBufferReader::onRead(void* ptr, size_t count)
+{
+  if (pos_ >= buf_.size()) {
+    return 0;
+  }
+  size_t avail = buf_.size() - pos_;
+  size_t n = count < avail ? count : avail;
+  std::memcpy(ptr, buf_.data() + pos_, n);
+  pos_ += n;
+  return n;
+}
 
-  Sqlite3SessionStore(const Sqlite3SessionStore&) = delete;
-  Sqlite3SessionStore& operator=(const Sqlite3SessionStore&) = delete;
+size_t MemBufferReader::onWrite(const void* /*ptr*/, size_t /*count*/)
+{
+  assert(0);
+  return 0;
+}
 
-  // Wholesale rewrite: DELETE FROM task; then INSERT one row per active and
-  // reserved RG, in queue-position order, all in a single transaction.
-  void saveAllTasks(RequestGroupMan* rgman);
+char* MemBufferReader::onGets(char* s, int size)
+{
+  if (pos_ >= buf_.size() || size <= 0) {
+    return nullptr;
+  }
+  int i = 0;
+  while (i < size - 1 && pos_ < buf_.size()) {
+    char c = buf_[pos_++];
+    s[i++] = c;
+    if (c == '\n') {
+      break;
+    }
+  }
+  if (i == 0) {
+    return nullptr;
+  }
+  s[i] = '\0';
+  return s;
+}
 
-  // Read task rows (ordered by queue_position ASC), concatenate their
-  // serialized blobs, and parse them into RequestGroup objects appended to out.
-  void loadActiveTasksInto(std::vector<std::shared_ptr<RequestGroup>>& out,
-                           const std::shared_ptr<Option>& op);
+int MemBufferReader::onVprintf(const char* /*format*/, va_list /*va*/)
+{
+  assert(0);
+  return -1;
+}
 
-private:
-  Sqlite3PersistenceStore* store_;
-};
+int MemBufferReader::onFlush() { return 0; }
+
+int MemBufferReader::onClose() { return 0; }
+
+bool MemBufferReader::onSupportsColor() { return false; }
+
+bool MemBufferReader::isError() const { return false; }
+
+bool MemBufferReader::isEOF() const { return pos_ >= buf_.size(); }
+
+bool MemBufferReader::isOpen() const { return true; }
 
 } // namespace aria2
-
-#endif // HAVE_SQLITE3
-
-#endif // D_SQLITE3_SESSION_STORE_H

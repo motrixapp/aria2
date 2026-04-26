@@ -56,6 +56,9 @@ private:
 public:
   UriListParser(const std::string& filename);
 
+  // Takes direct ownership of an already-opened IOFile (e.g. MemBufferReader).
+  explicit UriListParser(std::unique_ptr<IOFile> fp);
+
   ~UriListParser();
 
   void parseNext(std::vector<std::string>& uris, Option& op);

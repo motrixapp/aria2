@@ -60,6 +60,11 @@ UriListParser::UriListParser(const std::string& filename)
 {
 }
 
+UriListParser::UriListParser(std::unique_ptr<IOFile> fp)
+    : fp_(std::move(fp))
+{
+}
+
 UriListParser::~UriListParser() = default;
 
 void UriListParser::parseNext(std::vector<std::string>& uris, Option& op)
