@@ -89,7 +89,7 @@ CXX = c++ -stdlib=libc++
 export CXX
 
 # Set up compiler/linker flags.
-PLATFORMFLAGS ?= -mmacosx-version-min=10.10
+PLATFORMFLAGS ?= -mmacosx-version-min=11.0
 OPTFLAGS ?= -Os
 CFLAGS ?= $(PLATFORMFLAGS) $(OPTFLAGS)
 export CFLAGS
@@ -100,63 +100,69 @@ export LDFLAGS
 
 LTO_FLAGS = -flto -ffunction-sections -fdata-sections
 
-# Dependency versions
-zlib_version = 1.2.11
-zlib_hash = c3e5e9fdd5004dcb542feda5ee4f0ff0744628baf8ed2dd5d66f8ca1197cb1a1
-zlib_url = http://zlib.net/zlib-$(zlib_version).tar.gz
+# Detect native architecture
+NATIVE_ARCH := $(shell uname -m)
 
-expat_version = 2.2.8
-expat_hash = bd507cba42716ca9afe46dd3687fb0d46c09347517beb9770f53a435d2c67ea0
-expat_url = https://github.com/libexpat/libexpat/releases/download/R_2_2_8/expat-2.2.8.tar.gz
+# Dependency versions
+zlib_version = 1.3.2
+zlib_hash = bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16
+zlib_url = https://zlib.net/zlib-$(zlib_version).tar.gz
+
+expat_version = 2.7.5
+expat_hash = 9931f9860d18e6cf72d183eb8f309bfb96196c00e1d40caa978e95bc9aa978b6
+expat_url = https://github.com/libexpat/libexpat/releases/download/R_2_7_5/expat-$(expat_version).tar.gz
 expat_cflags=$(CFLAGS) $(LTO_FLAGS)
 expat_ldflags=$(CFLAGS) $(LTO_FLAGS)
 
-cares_version = 1.15.0
-cares_hash = 6cdb97871f2930530c97deb7cf5c8fa4be5a0b02c7cea6e7c7667672a39d6852
-cares_url = https://c-ares.haxx.se/download/c-ares-$(cares_version).tar.gz
+cares_version = 1.34.6
+cares_hash = 912dd7cc3b3e8a79c52fd7fb9c0f4ecf0aaa73e45efda880266a2d6e26b84ef5
+cares_url = https://github.com/c-ares/c-ares/releases/download/v$(cares_version)/c-ares-$(cares_version).tar.gz
 cares_confflags = "--enable-optimize=$(OPTFLAGS)"
 cares_cflags=$(CFLAGS) $(LTO_FLAGS)
 cares_ldflags=$(CFLAGS) $(LTO_FLAGS)
 
-sqlite_version = autoconf-3300000
-sqlite_hash = e0a8cf4c7a87455e55e10413d16f358ca121ccec687fe1301eac95e2d340fc58
-sqlite_url = https://sqlite.org/2019/sqlite-$(sqlite_version).tar.gz
+sqlite_version = autoconf-3510300
+sqlite_hash = 81f5be397049b0cae1b167f2225af7646fc0f82e4a9b3c48c9ea3a533e21d77a
+sqlite_url = https://www.sqlite.org/2026/sqlite-$(sqlite_version).tar.gz
 sqlite_cflags=$(CFLAGS) $(LTO_FLAGS)
 sqlite_ldflags=$(CFLAGS) $(LTO_FLAGS)
 
-gmp_version = 6.1.2
-gmp_hash = 5275bb04f4863a13516b2f39392ac5e272f5e1bb8057b18aec1c9b79d73d8fb2
-gmp_url = https://ftp.gnu.org/gnu/gmp/gmp-$(gmp_version).tar.bz2
+gmp_version = 6.3.0
+gmp_hash = a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898
+gmp_url = https://ftp.gnu.org/gnu/gmp/gmp-$(gmp_version).tar.xz
 gmp_confflags = --disable-cxx --enable-assembly --with-pic --enable-fat
 gmp_cflags=$(CFLAGS)
 gmp_cxxflags=$(CXXFLAGS)
 
-libgpgerror_version = 1.36
-libgpgerror_hash = babd98437208c163175c29453f8681094bcaf92968a15cafb1a276076b33c97c
+libgpgerror_version = 1.59
+libgpgerror_hash = a19bc5087fd97026d93cb4b45d51638d1a25202a5e1fbc3905799f424cfa6134
 libgpgerror_url = https://gnupg.org/ftp/gcrypt/libgpg-error/libgpg-error-$(libgpgerror_version).tar.bz2
 libgpgerror_cflags=$(CFLAGS) $(LTO_FLAGS)
 libgpgerror_ldflags=$(CFLAGS) $(LTO_FLAGS)
 libgpgerror_confflags = --with-pic --disable-languages --disable-doc --disable-nls
 
-libgcrypt_version = 1.8.5
-libgcrypt_hash = 3b4a2a94cb637eff5bdebbcaf46f4d95c4f25206f459809339cdada0eb577ac3
+libgcrypt_version = 1.11.3
+libgcrypt_hash = 2c6d562e894b2b06eefbc427d12d51ee9d3e50e90012ad6596b4cb3e421a95f2
 libgcrypt_url = https://gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-$(libgcrypt_version).tar.bz2
-libgcrypt_confflags=--with-gpg-error-prefix=$(PWD)/arch --disable-O-flag-munging --disable-asm --disable-amd64-as-feature-detection
+libgcrypt_confflags=--with-gpg-error-prefix=$(PWD)/arch --disable-O-flag-munging --disable-asm
 libgcrypt_cflags=$(PLATFORMFLAGS)
 libgcrypt_cxxflags=$(PLATFORMFLAGS)
 
-libssh2_version = 1.9.0
-libssh2_hash = d5fb8bd563305fd1074dda90bd053fb2d29fc4bce048d182f96eaa466dfadafd
+libssh2_version = 1.11.1
+libssh2_hash = d9ec76cbe34db98eec3539fe2c899d26b0c837cb3eb466a56b0f109cabf658f7
 libssh2_url = https://www.libssh2.org/download/libssh2-$(libssh2_version).tar.gz
 libssh2_cflags=$(CFLAGS) $(LTO_FLAGS)
 libssh2_cxxflags=$(CXXFLAGS) $(LTO_FLAGS)
 libssh2_ldflags=$(CFLAGS) $(LTO_FLAGS)
 libssh2_confflags = --with-pic --without-openssl --with-libgcrypt=$(PWD)/arch --with-libgcrypt-prefix=$(PWD)/arch
 libssh2_nocheck = yes
+# sqlite 3.51.x autoconf amalgamation drops the `check` target in Makefile.in,
+# so skip per-dep `make check`. TCL-based tests need a separate harness.
+sqlite_nocheck = yes
 
-cppunit_version = 1.12.1
-cppunit_hash = ac28a04c8e6c9217d910b0ae7122832d28d9917fa668bcc9e0b8b09acb4ea44a
-cppunit_url = http://sourceforge.net/projects/cppunit/files/cppunit/$(cppunit_version)/cppunit-$(cppunit_version).tar.gz
+cppunit_version = 1.15.1
+cppunit_hash = 89c5c6665337f56fd2db36bc3805a5619709d51fb136e51937072f63fcc717a7
+cppunit_url = https://dev-www.libreoffice.org/src/cppunit-$(cppunit_version).tar.gz
 cppunit_cflags=$(CFLAGS) $(LTO_FLAGS)
 cppunit_cxxflags=$(CXXFLAGS) $(LTO_FLAGS)
 
@@ -214,7 +220,7 @@ define ARIA2_DISTXML
 	<options customize="never" require-scripts="false" rootVolumeOnly="true"/>
 	<volume-check>
 		<allowed-os-versions>
-			<os-version min="10.7"/>
+			<os-version min="11.0"/>
 		</allowed-os-versions>
 	</volume-check>
 	<domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
@@ -268,6 +274,11 @@ deps::
 	curl -o $@ -A 'curl/0; like wget' -L \
 		$($(basename $(basename $@))_url)
 
+.PRECIOUS: %.tar.xz
+%.tar.xz:
+	curl -o $@ -A 'curl/0; like wget' -L \
+		$($(basename $(basename $@))_url)
+
 .PRECIOUS: %.check
 %.check: %.tar.gz
 	@if test "$$(shasum -a256 $< | awk '{print $$1}')" != "$($(basename $@)_hash)"; then \
@@ -281,6 +292,22 @@ deps::
 %.stamp: %.tar.gz %.check
 	tar xf $<
 	mv $(basename $@)-$($(basename $@)_version) $(basename $@)
+	touch $@
+
+# gmp uses .tar.xz
+.PRECIOUS: gmp.check
+gmp.check: gmp.tar.xz
+	@if test "$$(shasum -a256 $< | awk '{print $$1}')" != "$(gmp_hash)"; then \
+		echo "Invalid $@ hash"; \
+		rm -f $<; \
+		exit 1; \
+	fi;
+	touch $@
+
+.PRECIOUS: gmp.stamp
+gmp.stamp: gmp.tar.xz gmp.check
+	tar xf $<
+	mv gmp-$(gmp_version) gmp
 	touch $@
 
 .PRECIOUS: cares.stamp
@@ -298,7 +325,7 @@ libgpgerror.stamp: libgpgerror.tar.gz libgpgerror.check
 # Using (NON)ARCH_template kinda stinks, but real multi-target pattern rules
 # only exist in feverish dreams.
 define NONARCH_template
-$(1).build: $(1).x86_64.build
+$(1).build: $(1).$(NATIVE_ARCH).build
 
 deps:: $(1).build
 
@@ -331,7 +358,7 @@ $(1).%.build: $(1).stamp
 		--prefix=$(PWD)/arch \
 		$$($(1)_confflags) \
 		CFLAGS="$$($(1)_cflags) -arch $$(ARCH)" \
-		CXXFLAGS="$$($(1)_cxxflags) -arch $$(ARCH) -std=c++11" \
+		CXXFLAGS="$$($(1)_cxxflags) -arch $$(ARCH) -std=c++14" \
 		LDFLAGS="$(LDFLAGS) $$($(1)_ldflags)" \
 		PKG_CONFIG_PATH=$$(PWD)/arch/lib/pkgconfig \
 		)
@@ -340,7 +367,7 @@ $(1).%.build: $(1).stamp
 	$$(MAKE) -C $$(DEST) -s install
 	touch $$@
 
-$(1).build: $(1).x86_64.build
+$(1).build: $(1).$(NATIVE_ARCH).build
 
 deps:: $(1).build
 
@@ -371,16 +398,16 @@ aria2.%.build: zlib.%.build expat.%.build gmp.%.build cares.%.build sqlite.%.bui
 	$(MAKE) -C $(DEST) -sj$(CPUS) install-strip
 	touch $@
 
-aria2.build: aria2.x86_64.build
+aria2.build: aria2.$(NATIVE_ARCH).build
 	mkdir -p $(ARIA2_PREFIX)/bin
-	cp -f aria2.x86_64/aria2c $(ARIA2_PREFIX)/bin/aria2c
-	arch -64 $(ARIA2_PREFIX)/bin/aria2c -v
+	cp -f aria2.$(NATIVE_ARCH)/aria2c $(ARIA2_PREFIX)/bin/aria2c
+	$(ARIA2_PREFIX)/bin/aria2c -v
 	touch $@
 
-$(ARIA2_CHANGELOG): aria2.x86_64.build
+$(ARIA2_CHANGELOG): aria2.$(NATIVE_ARCH).build
 	git log --pretty=fuller --date=short $(PREV_TAG)..HEAD > $@
 
-$(ARIA2_DOCS): aria2.x86_64.build
+$(ARIA2_DOCS): aria2.$(NATIVE_ARCH).build
 	cp -av $(SRCDIR)/$(@F) $@
 
 $(ARIA2_DIST).tar.bz2: aria2.build $(ARIA2_DOCS) $(ARIA2_CHANGELOG)
@@ -421,7 +448,7 @@ $(ARIA2_DIST).dmg: $(ARIA2_DIST).pkg
 	cp $(SRCDIR)/osx-package/DS_Store dmg/.DS_Store
 	hdiutil create $@.uncompressed \
 		-srcfolder dmg \
-		-volname "aria2 $(VERSION) Intel" \
+		-volname "aria2 $(VERSION)" \
 		-ov
 	hdiutil convert -format UDBZ -o $@ $@.uncompressed.dmg
 	hdiutil flatten $@
@@ -440,7 +467,7 @@ clean: clean-dist
 	rm -rf *aria2*
 
 cleaner: clean
-	rm -rf *.build *.check *.stamp $(ARCHLIBS) $(NONARCHLIBS) arch *.x86_64
+	rm -rf *.build *.check *.stamp $(ARCHLIBS) $(NONARCHLIBS) arch *.x86_64 *.arm64
 
 really-clean: cleaner
 	rm -rf *.tar.*
