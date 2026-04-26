@@ -662,6 +662,31 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
     op->addTag(TAG_ADVANCED);
     handlers.push_back(op);
   }
+#ifdef HAVE_SQLITE3
+  {
+    OptionHandler* op(new BooleanOptionHandler(
+        PREF_ENABLE_SQLITE3_PERSISTENCE, TEXT_ENABLE_SQLITE3_PERSISTENCE,
+        A2_V_FALSE, OptionHandler::OPT_ARG));
+    op->addTag(TAG_BASIC);
+    op->addTag(TAG_FILE);
+    handlers.push_back(op);
+  }
+  {
+    OptionHandler* op(new LocalFilePathOptionHandler(
+        PREF_SQLITE3_DB_PATH, TEXT_SQLITE3_DB_PATH, NO_DEFAULT_VALUE,
+        /* acceptStdin = */ false, 0, /* mustExist = */ false));
+    op->addTag(TAG_BASIC);
+    op->addTag(TAG_FILE);
+    handlers.push_back(op);
+  }
+  {
+    OptionHandler* op(new NumberOptionHandler(
+        PREF_SQLITE3_HISTORY_LIMIT, TEXT_SQLITE3_HISTORY_LIMIT, "-1", -1,
+        INT_MAX));
+    op->addTag(TAG_BASIC);
+    handlers.push_back(op);
+  }
+#endif // HAVE_SQLITE3
   {
     OptionHandler* op(new NumberOptionHandler(PREF_DSCP, TEXT_DSCP, "0", 0));
     op->addTag(TAG_ADVANCED);

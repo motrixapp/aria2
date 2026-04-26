@@ -739,6 +739,17 @@
     "                              as a file will not be saved. Downloads removed\n" \
     "                              using aria2.remove and aria2.forceRemove will not\n" \
     "                              be saved.")
+#define TEXT_ENABLE_SQLITE3_PERSISTENCE \
+  _(" --enable-sqlite3-persistence[=true|false]\n" \
+    "                              Enable SQLite3-backed persistence as a replacement\n" \
+    "                              for aria2.session and per-download .aria2 control files.\n" \
+    "                              See --sqlite3-db-path, --sqlite3-history-limit.")
+#define TEXT_SQLITE3_DB_PATH \
+  _(" --sqlite3-db-path=PATH       Path to the SQLite3 database file.\n" \
+    "                              Default: <--dir>/aria2.db.")
+#define TEXT_SQLITE3_HISTORY_LIMIT \
+  _(" --sqlite3-history-limit=N    Max completed/failed history rows kept in DB.\n" \
+    "                              -1 (default)=unlimited; 0=none; positive N=FIFO cap.")
 #define TEXT_MAX_CONNECTION_PER_SERVER          \
   _(" -x, --max-connection-per-server=NUM The maximum number of connections to one\n" \
     "                              server for each download.")
