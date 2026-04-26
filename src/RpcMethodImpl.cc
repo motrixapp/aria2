@@ -270,7 +270,11 @@ std::unique_ptr<ValueBase> AddUriRpcMethod::process(const RpcRequest& req,
                            /* ignoreLocalPath = */ true);
 
   if (!result.empty()) {
-    return addRequestGroup(result.front(), e, posGiven, pos);
+    auto response = addRequestGroup(result.front(), e, posGiven, pos);
+#ifdef HAVE_SQLITE3
+    persistTaskMutation(e, result.front());
+#endif
+    return response;
   }
   else {
     throw DL_ABORT_EX("No URI to download.");
@@ -334,7 +338,16 @@ std::unique_ptr<ValueBase> AddTorrentRpcMethod::process(const RpcRequest& req,
                                   torrentParam->s());
 
   if (!result.empty()) {
-    return addRequestGroup(result.front(), e, posGiven, pos);
+    auto response = addRequestGroup(result.front(), e, posGiven, pos);
+#ifdef HAVE_SQLITE3
+    // Spec §6.3: only persist tasks whose metadata is recoverable from disk.
+    // PREF_TORRENT_FILE is put on the option only when util::saveAs succeeded,
+    // or when --rpc-save-upload-metadata=false (no save attempted).
+    if (!result.front()->getOption()->get(PREF_TORRENT_FILE).empty()) {
+      persistTaskMutation(e, result.front());
+    }
+#endif
+    return response;
   }
   else {
     throw DL_ABORT_EX("No Torrent to download.");
@@ -399,6 +412,12 @@ std::unique_ptr<ValueBase> AddMetalinkRpcMethod::process(const RpcRequest& req,
     }
     for (auto& i : result) {
       gids->append(GroupId::toHex(i->getGID()));
+#ifdef HAVE_SQLITE3
+      // Spec §6.3: only persist tasks whose metadata is recoverable from disk.
+      if (!i->getOption()->get(PREF_METALINK_FILE).empty()) {
+        persistTaskMutation(e, i);
+      }
+#endif
     }
   }
   return std::move(gids);

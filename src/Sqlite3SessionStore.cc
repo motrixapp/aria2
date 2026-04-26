@@ -51,6 +51,7 @@
 #include "Sqlite3PersistenceStore.h"
 #include "download_helper.h"
 #include "fmt.h"
+#include "prefs.h"
 
 namespace aria2 {
 
@@ -84,15 +85,17 @@ const char* const kInsertTaskSql =
 
 const char* const kUpsertTaskSql =
     "INSERT INTO task"
-    " (gid, state, serialized, queue_position, digest, created_at, updated_at)"
+    " (gid, state, serialized, queue_position, digest, created_at, updated_at,"
+    "  bt_local_path)"
     " VALUES (?, ?, ?,"
     "  COALESCE((SELECT MAX(queue_position)+1 FROM task), 0),"
-    "  ?, ?, ?)"
+    "  ?, ?, ?, ?)"
     " ON CONFLICT(gid) DO UPDATE SET"
-    "  state      = excluded.state,"
-    "  serialized = excluded.serialized,"
-    "  digest     = excluded.digest,"
-    "  updated_at = excluded.updated_at";
+    "  state         = excluded.state,"
+    "  serialized    = excluded.serialized,"
+    "  digest        = excluded.digest,"
+    "  updated_at    = excluded.updated_at,"
+    "  bt_local_path = excluded.bt_local_path";
 
 const char* const kDeleteTaskSql = "DELETE FROM task WHERE gid = ?";
 
@@ -280,6 +283,19 @@ void Sqlite3SessionStore::upsertTask(const std::shared_ptr<RequestGroup>& rg)
                       static_cast<int>(digest.size()), SQLITE_TRANSIENT);
     sqlite3_bind_int64(stmt, 5, static_cast<sqlite3_int64>(now));
     sqlite3_bind_int64(stmt, 6, static_cast<sqlite3_int64>(now));
+
+    const std::string& torrentFile = rg->getOption()->get(PREF_TORRENT_FILE);
+    const std::string& metalinkFile = rg->getOption()->get(PREF_METALINK_FILE);
+    const std::string& btLocalPath =
+        !torrentFile.empty() ? torrentFile : metalinkFile;
+    if (btLocalPath.empty()) {
+      sqlite3_bind_null(stmt, 7);
+    }
+    else {
+      sqlite3_bind_text(stmt, 7, btLocalPath.data(),
+                        static_cast<int>(btLocalPath.size()),
+                        SQLITE_TRANSIENT);
+    }
 
     if (sqlite3_step(stmt) != SQLITE_DONE) {
       throw DL_ABORT_EX(

@@ -94,6 +94,7 @@ class RpcMethodTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testSaveSessionRpcWritesBothBackends);
   CPPUNIT_TEST(testChangeOptionPersistsToDb);
   CPPUNIT_TEST(testChangePositionPersistsOrder);
+  CPPUNIT_TEST(testAddUriPersistsTaskRow);
 #endif // HAVE_SQLITE3
   CPPUNIT_TEST_SUITE_END();
 
@@ -169,6 +170,7 @@ public:
   void testSaveSessionRpcWritesBothBackends();
   void testChangeOptionPersistsToDb();
   void testChangePositionPersistsOrder();
+  void testAddUriPersistsTaskRow();
 #endif // HAVE_SQLITE3
 };
 
@@ -1641,6 +1643,42 @@ void RpcMethodTest::testChangeOptionPersistsToDb()
 
   CPPUNIT_ASSERT(serialized.find("max-connection-per-server=5") !=
                  std::string::npos);
+
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+}
+#endif // HAVE_SQLITE3
+
+#ifdef HAVE_SQLITE3
+void RpcMethodTest::testAddUriPersistsTaskRow()
+{
+  std::string dbPath =
+      std::string(A2_TEST_OUT_DIR) + "/add_uri_persists.db";
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+
+  auto store = make_unique<Sqlite3PersistenceStore>(dbPath);
+  store->open();
+  auto* storePtr = store.get();
+  e_->setSqlite3Store(std::move(store));
+
+  AddUriRpcMethod m;
+  auto req = createReq(AddUriRpcMethod::getMethodName());
+  auto urisList = List::g();
+  urisList->append("http://example.com/y");
+  req.params->append(std::move(urisList));
+  auto res = m.execute(std::move(req), e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+
+  sqlite3_stmt* stmt = nullptr;
+  CPPUNIT_ASSERT_EQUAL(SQLITE_OK,
+      sqlite3_prepare_v2(storePtr->raw(),
+                         "SELECT COUNT(*) FROM task", -1, &stmt, nullptr));
+  CPPUNIT_ASSERT_EQUAL(SQLITE_ROW, sqlite3_step(stmt));
+  CPPUNIT_ASSERT_EQUAL(1, sqlite3_column_int(stmt, 0));
+  sqlite3_finalize(stmt);
 
   std::remove(dbPath.c_str());
   std::remove((dbPath + "-wal").c_str());
