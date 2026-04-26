@@ -37,6 +37,8 @@
 #ifdef HAVE_SQLITE3
 
 #include <chrono>
+#include <functional>
+#include <sstream>
 
 #include <sqlite3.h>
 
@@ -48,6 +50,7 @@
 #include "Sqlite3PersistenceStore.h"
 #include "error_code.h"
 #include "fmt.h"
+#include "util.h"
 
 namespace aria2 {
 
@@ -92,6 +95,336 @@ const char* const kInsertFilesSql =
 const char* const kInsertUrisSql =
     "INSERT INTO download_history_file_uris"
     " (history_id, file_index, uri, status) VALUES (?, ?, ?, ?)";
+
+// SELECT columns shared by range() and search() — returns one row per history.
+const char* const kSelectCols =
+    "SELECT id, gid, status, result_code, result_message, total_length,"
+    "       completed_length, upload_length, num_pieces, piece_length,"
+    "       bitfield, info_hash, dir, belongs_to, following, followed_by,"
+    "       in_memory, serialized, metadata_uri,"
+    "       bt_name, bt_announce_list, bt_comment, bt_creation_date, bt_mode,"
+    "       bt_is_private, bt_local_path, finished_at"
+    " FROM download_history h";
+
+const char* const kRangeAscSql =
+    "SELECT id, gid, status, result_code, result_message, total_length,"
+    "       completed_length, upload_length, num_pieces, piece_length,"
+    "       bitfield, info_hash, dir, belongs_to, following, followed_by,"
+    "       in_memory, serialized, metadata_uri,"
+    "       bt_name, bt_announce_list, bt_comment, bt_creation_date, bt_mode,"
+    "       bt_is_private, bt_local_path, finished_at"
+    " FROM download_history"
+    " ORDER BY finished_at ASC, id ASC"
+    " LIMIT ? OFFSET ?";
+
+const char* const kRangeDescSql =
+    "SELECT id, gid, status, result_code, result_message, total_length,"
+    "       completed_length, upload_length, num_pieces, piece_length,"
+    "       bitfield, info_hash, dir, belongs_to, following, followed_by,"
+    "       in_memory, serialized, metadata_uri,"
+    "       bt_name, bt_announce_list, bt_comment, bt_creation_date, bt_mode,"
+    "       bt_is_private, bt_local_path, finished_at"
+    " FROM download_history"
+    " ORDER BY finished_at DESC, id DESC"
+    " LIMIT ? OFFSET ?";
+
+const char* const kSelectFilesSql =
+    "SELECT file_index, path, length, selected"
+    " FROM download_history_files"
+    " WHERE history_id = ?"
+    " ORDER BY file_index ASC";
+
+const char* const kSelectUrisSql =
+    "SELECT uri, status FROM download_history_file_uris"
+    " WHERE history_id = ? AND file_index = ?";
+
+// Reconstruct a DownloadResult from one row of the main SELECT.
+// Column order matches kRangeAscSql / kSelectCols:
+//  0=id 1=gid 2=status 3=result_code 4=result_message 5=total_length
+//  6=completed_length 7=upload_length 8=num_pieces 9=piece_length
+//  10=bitfield 11=info_hash 12=dir 13=belongs_to 14=following 15=followed_by
+//  16=in_memory 17=serialized 18=metadata_uri
+//  19=bt_name ... (ignored for v1)
+//  26=finished_at (unused in DR struct)
+std::shared_ptr<DownloadResult> rowToDr(sqlite3_stmt* stmt)
+{
+  auto dr = std::make_shared<DownloadResult>();
+
+  // col 1: gid (text hex)
+  const char* gidTxt =
+      reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+  if (gidTxt && gidTxt[0]) {
+    a2_gid_t gidNum = 0;
+    if (GroupId::toNumericId(gidNum, gidTxt) == 0) {
+      dr->gid = GroupId::import(gidNum);
+    }
+  }
+
+  // col 3: result_code
+  dr->result =
+      static_cast<error_code::Value>(sqlite3_column_int(stmt, 3));
+
+  // col 4: result_message
+  const char* msg =
+      reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+  if (msg) {
+    dr->resultMessage = msg;
+  }
+
+  // col 5-7: lengths
+  dr->totalLength = sqlite3_column_int64(stmt, 5);
+  dr->completedLength = sqlite3_column_int64(stmt, 6);
+  dr->uploadLength = sqlite3_column_int64(stmt, 7);
+
+  // col 8: num_pieces
+  dr->numPieces = static_cast<size_t>(sqlite3_column_int64(stmt, 8));
+
+  // col 9: piece_length
+  dr->pieceLength = sqlite3_column_int(stmt, 9);
+
+  // col 10: bitfield (blob)
+  if (sqlite3_column_type(stmt, 10) != SQLITE_NULL) {
+    const char* bfData =
+        reinterpret_cast<const char*>(sqlite3_column_blob(stmt, 10));
+    int bfLen = sqlite3_column_bytes(stmt, 10);
+    if (bfData && bfLen > 0) {
+      dr->bitfield.assign(bfData, bfLen);
+    }
+  }
+
+  // col 11: info_hash (blob)
+  if (sqlite3_column_type(stmt, 11) != SQLITE_NULL) {
+    const char* ihData =
+        reinterpret_cast<const char*>(sqlite3_column_blob(stmt, 11));
+    int ihLen = sqlite3_column_bytes(stmt, 11);
+    if (ihData && ihLen > 0) {
+      dr->infoHash.assign(ihData, ihLen);
+    }
+  }
+
+  // col 12: dir
+  const char* dir =
+      reinterpret_cast<const char*>(sqlite3_column_text(stmt, 12));
+  if (dir) {
+    dr->dir = dir;
+  }
+
+  // col 13: belongs_to (text hex or NULL)
+  if (sqlite3_column_type(stmt, 13) != SQLITE_NULL) {
+    const char* bto =
+        reinterpret_cast<const char*>(sqlite3_column_text(stmt, 13));
+    if (bto && bto[0]) {
+      a2_gid_t n = 0;
+      if (GroupId::toNumericId(n, bto) == 0) {
+        dr->belongsTo = n;
+      }
+    }
+  }
+
+  // col 14: following (text hex or NULL)
+  if (sqlite3_column_type(stmt, 14) != SQLITE_NULL) {
+    const char* fw =
+        reinterpret_cast<const char*>(sqlite3_column_text(stmt, 14));
+    if (fw && fw[0]) {
+      a2_gid_t n = 0;
+      if (GroupId::toNumericId(n, fw) == 0) {
+        dr->following = n;
+      }
+    }
+  }
+
+  // col 15: followed_by JSON array — skip for now (reconstruction light)
+  // col 16: in_memory
+  dr->inMemoryDownload = sqlite3_column_int(stmt, 16) != 0;
+
+  // col 17: serialized — not needed for reconstruction shape
+  // col 18: metadata_uri — skip for now
+  // BT cols 19-25: skip for v1
+
+  return dr;
+}
+
+// Build WHERE clause string + bind-closure vector for a SearchFilter.
+// Writes to sqlOss and appends closures to bindFns.
+void appendWhereClauses(
+    std::ostringstream& sqlOss,
+    std::vector<std::function<void(sqlite3_stmt*, int)>>& bindFns,
+    const SearchFilter& f,
+    bool needJoin)
+{
+  bool first = true;
+  auto sep = [&]() -> const char* {
+    if (first) {
+      first = false;
+      return " WHERE ";
+    }
+    return " AND ";
+  };
+
+  if (!f.statuses.empty()) {
+    sqlOss << sep() << "h.status IN (";
+    for (size_t i = 0; i < f.statuses.size(); ++i) {
+      if (i) {
+        sqlOss << ",";
+      }
+      sqlOss << "?";
+      std::string s = f.statuses[i];
+      bindFns.push_back([s](sqlite3_stmt* st, int idx) {
+        sqlite3_bind_text(st, idx, s.data(), static_cast<int>(s.size()),
+                          SQLITE_TRANSIENT);
+      });
+    }
+    sqlOss << ")";
+  }
+
+  if (f.since >= 0) {
+    sqlOss << sep() << "h.finished_at >= ?";
+    int64_t v = f.since;
+    bindFns.push_back([v](sqlite3_stmt* st, int idx) {
+      sqlite3_bind_int64(st, idx, v);
+    });
+  }
+
+  if (f.until >= 0) {
+    sqlOss << sep() << "h.finished_at <= ?";
+    int64_t v = f.until;
+    bindFns.push_back([v](sqlite3_stmt* st, int idx) {
+      sqlite3_bind_int64(st, idx, v);
+    });
+  }
+
+  if (!f.infoHashHex.empty()) {
+    // info_hash stored as blob; compare raw bytes (spec §8.6)
+    sqlOss << sep() << "h.info_hash = ?";
+    // Decode hex string to raw bytes using aria2::util::fromHex
+    std::string rawHash =
+        aria2::util::fromHex(f.infoHashHex.begin(), f.infoHashHex.end());
+    if (rawHash.empty()) {
+      throw DL_ABORT_EX(
+          fmt("sqlite3-persistence: invalid hex in infoHashHex: %s",
+              f.infoHashHex.c_str()));
+    }
+    bindFns.push_back([rawHash](sqlite3_stmt* st, int idx) {
+      sqlite3_bind_blob(st, idx, rawHash.data(),
+                        static_cast<int>(rawHash.size()), SQLITE_TRANSIENT);
+    });
+  }
+
+  if (!f.gidPrefix.empty()) {
+    sqlOss << sep() << "h.gid LIKE ? || '%'";
+    std::string p = f.gidPrefix;
+    bindFns.push_back([p](sqlite3_stmt* st, int idx) {
+      sqlite3_bind_text(st, idx, p.data(), static_cast<int>(p.size()),
+                        SQLITE_TRANSIENT);
+    });
+  }
+
+  if (f.minSize >= 0) {
+    sqlOss << sep() << "h.total_length >= ?";
+    int64_t v = f.minSize;
+    bindFns.push_back([v](sqlite3_stmt* st, int idx) {
+      sqlite3_bind_int64(st, idx, v);
+    });
+  }
+
+  if (f.maxSize >= 0) {
+    sqlOss << sep() << "h.total_length <= ?";
+    int64_t v = f.maxSize;
+    bindFns.push_back([v](sqlite3_stmt* st, int idx) {
+      sqlite3_bind_int64(st, idx, v);
+    });
+  }
+
+  if (!f.pathLike.empty()) {
+    sqlOss << sep()
+           << "EXISTS (SELECT 1 FROM download_history_files f2"
+           << " WHERE f2.history_id = h.id AND f2.path LIKE ?)";
+    std::string p = f.pathLike;
+    bindFns.push_back([p](sqlite3_stmt* st, int idx) {
+      sqlite3_bind_text(st, idx, p.data(), static_cast<int>(p.size()),
+                        SQLITE_TRANSIENT);
+    });
+  }
+  (void)needJoin;
+}
+
+// Load file entries (with URIs) for the given history_id.
+std::vector<std::shared_ptr<FileEntry>>
+loadFileEntriesForHistoryId(sqlite3* db, int64_t historyId)
+{
+  std::vector<std::shared_ptr<FileEntry>> entries;
+
+  StmtGuard fstmt;
+  if (sqlite3_prepare_v2(db, kSelectFilesSql, -1, &fstmt.stmt, nullptr) !=
+      SQLITE_OK) {
+    throw DL_ABORT_EX(
+        fmt("sqlite3-persistence: prepare SELECT files failed: %s",
+            sqlite3_errmsg(db)));
+  }
+
+  StmtGuard ustmt;
+  if (sqlite3_prepare_v2(db, kSelectUrisSql, -1, &ustmt.stmt, nullptr) !=
+      SQLITE_OK) {
+    throw DL_ABORT_EX(
+        fmt("sqlite3-persistence: prepare SELECT uris failed: %s",
+            sqlite3_errmsg(db)));
+  }
+
+  sqlite3_bind_int64(fstmt, 1, historyId);
+
+  while (sqlite3_step(fstmt) == SQLITE_ROW) {
+    int fileIndex = sqlite3_column_int(fstmt, 0);
+    const char* path =
+        reinterpret_cast<const char*>(sqlite3_column_text(fstmt, 1));
+    int64_t length = sqlite3_column_int64(fstmt, 2);
+    bool selected = sqlite3_column_int(fstmt, 3) != 0;
+
+    auto fe = std::make_shared<FileEntry>(path ? path : "", length,
+                                          static_cast<int64_t>(0));
+    fe->setRequested(selected);
+
+    // Load URIs for this file
+    sqlite3_reset(ustmt);
+    sqlite3_clear_bindings(ustmt);
+    sqlite3_bind_int64(ustmt, 1, historyId);
+    sqlite3_bind_int(ustmt, 2, fileIndex);
+
+    while (sqlite3_step(ustmt) == SQLITE_ROW) {
+      const char* uri =
+          reinterpret_cast<const char*>(sqlite3_column_text(ustmt, 0));
+      const char* status =
+          reinterpret_cast<const char*>(sqlite3_column_text(ustmt, 1));
+      if (!uri) {
+        continue;
+      }
+      if (status && std::string(status) == "used") {
+        fe->getSpentUris().push_back(uri);
+      }
+      else {
+        fe->addUri(uri);
+      }
+    }
+
+    entries.push_back(std::move(fe));
+  }
+
+  return entries;
+}
+
+// Execute a query (already prepared and bound) and collect DownloadResults.
+// Also loads file entries for each row.
+std::vector<std::shared_ptr<DownloadResult>>
+collectResults(sqlite3_stmt* stmt, sqlite3* db)
+{
+  std::vector<std::shared_ptr<DownloadResult>> results;
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    int64_t historyId = sqlite3_column_int64(stmt, 0);
+    auto dr = rowToDr(stmt);
+    dr->fileEntries = loadFileEntriesForHistoryId(db, historyId);
+    results.push_back(std::move(dr));
+  }
+  return results;
+}
 
 } // namespace
 
@@ -224,13 +557,13 @@ void Sqlite3DownloadResultRepository::insert(
     }
     // BT detail columns: bind nulls for v1. Future tasks will extract from
     // dr->attrs.
-    sqlite3_bind_null(hist, ++idx); // bt_name
-    sqlite3_bind_null(hist, ++idx); // bt_announce_list
-    sqlite3_bind_null(hist, ++idx); // bt_comment
-    sqlite3_bind_null(hist, ++idx); // bt_creation_date
-    sqlite3_bind_null(hist, ++idx); // bt_mode
-    sqlite3_bind_null(hist, ++idx); // bt_is_private
-    sqlite3_bind_null(hist, ++idx); // bt_local_path
+    sqlite3_bind_null(hist, ++idx);  // bt_name
+    sqlite3_bind_null(hist, ++idx);  // bt_announce_list
+    sqlite3_bind_null(hist, ++idx);  // bt_comment
+    sqlite3_bind_null(hist, ++idx);  // bt_creation_date
+    sqlite3_bind_null(hist, ++idx);  // bt_mode
+    sqlite3_bind_int(hist, ++idx, 0); // bt_is_private (NOT NULL DEFAULT 0)
+    sqlite3_bind_null(hist, ++idx);  // bt_local_path
     sqlite3_bind_int64(hist, ++idx, now);
 
     if (sqlite3_step(hist) != SQLITE_DONE) {
@@ -297,6 +630,142 @@ void Sqlite3DownloadResultRepository::insert(
       for (const auto& u : fe->getRemainingUris()) {
         bindUri(u, "waiting");
       }
+    }
+  });
+}
+
+int64_t Sqlite3DownloadResultRepository::countAll() const
+{
+  sqlite3* db = store_->raw();
+  StmtGuard stmt;
+  const char* sql = "SELECT COUNT(*) FROM download_history";
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt.stmt, nullptr) != SQLITE_OK) {
+    throw DL_ABORT_EX(
+        fmt("sqlite3-persistence: prepare COUNT(*) failed: %s",
+            sqlite3_errmsg(db)));
+  }
+  if (sqlite3_step(stmt) != SQLITE_ROW) {
+    return 0;
+  }
+  return sqlite3_column_int64(stmt, 0);
+}
+
+int64_t
+Sqlite3DownloadResultRepository::countWithFilter(const SearchFilter& f) const
+{
+  sqlite3* db = store_->raw();
+
+  std::ostringstream sqlOss;
+  sqlOss << "SELECT COUNT(*) FROM download_history h";
+  std::vector<std::function<void(sqlite3_stmt*, int)>> bindFns;
+  appendWhereClauses(sqlOss, bindFns, f, false);
+
+  std::string sql = sqlOss.str();
+  StmtGuard stmt;
+  if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt.stmt, nullptr) !=
+      SQLITE_OK) {
+    throw DL_ABORT_EX(
+        fmt("sqlite3-persistence: prepare countWithFilter failed: %s",
+            sqlite3_errmsg(db)));
+  }
+
+  int paramIdx = 1;
+  for (auto& fn : bindFns) {
+    fn(stmt, paramIdx++);
+  }
+
+  if (sqlite3_step(stmt) != SQLITE_ROW) {
+    return 0;
+  }
+  return sqlite3_column_int64(stmt, 0);
+}
+
+std::vector<std::shared_ptr<DownloadResult>>
+Sqlite3DownloadResultRepository::range(int offset, int num, bool desc) const
+{
+  sqlite3* db = store_->raw();
+
+  const char* sql = desc ? kRangeDescSql : kRangeAscSql;
+  StmtGuard stmt;
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt.stmt, nullptr) != SQLITE_OK) {
+    throw DL_ABORT_EX(
+        fmt("sqlite3-persistence: prepare range() failed: %s",
+            sqlite3_errmsg(db)));
+  }
+  sqlite3_bind_int(stmt, 1, num);
+  sqlite3_bind_int(stmt, 2, offset);
+
+  return collectResults(stmt, db);
+}
+
+std::vector<std::shared_ptr<DownloadResult>>
+Sqlite3DownloadResultRepository::search(const SearchFilter& f, int offset,
+                                         int num) const
+{
+  sqlite3* db = store_->raw();
+
+  std::ostringstream sqlOss;
+  sqlOss << kSelectCols;
+  std::vector<std::function<void(sqlite3_stmt*, int)>> bindFns;
+  appendWhereClauses(sqlOss, bindFns, f, false);
+  sqlOss << " ORDER BY h.finished_at DESC, h.id DESC LIMIT ? OFFSET ?";
+
+  std::string sql = sqlOss.str();
+  StmtGuard stmt;
+  if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt.stmt, nullptr) !=
+      SQLITE_OK) {
+    throw DL_ABORT_EX(
+        fmt("sqlite3-persistence: prepare search() failed: %s",
+            sqlite3_errmsg(db)));
+  }
+
+  int paramIdx = 1;
+  for (auto& fn : bindFns) {
+    fn(stmt, paramIdx++);
+  }
+  sqlite3_bind_int(stmt, paramIdx++, num);
+  sqlite3_bind_int(stmt, paramIdx, offset);
+
+  return collectResults(stmt, db);
+}
+
+void Sqlite3DownloadResultRepository::trimToCap(int historyLimit,
+                                                  bool keepUnfinished)
+{
+  if (historyLimit < 0) {
+    return; // unlimited
+  }
+
+  sqlite3* db = store_->raw();
+
+  store_->withTransaction([&]() {
+    // Build the DELETE with an optional WHERE status != 'error' filter.
+    std::ostringstream sqlOss;
+    sqlOss << "DELETE FROM download_history WHERE id IN ("
+           << "SELECT id FROM download_history";
+    if (keepUnfinished) {
+      sqlOss << " WHERE status != 'error'";
+    }
+    sqlOss << " ORDER BY finished_at ASC, id ASC"
+           << " LIMIT MAX(0, (SELECT COUNT(*) FROM download_history";
+    if (keepUnfinished) {
+      sqlOss << " WHERE status != 'error'";
+    }
+    sqlOss << ") - ?))";
+
+    std::string sql = sqlOss.str();
+    StmtGuard stmt;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt.stmt, nullptr) !=
+        SQLITE_OK) {
+      throw DL_ABORT_EX(
+          fmt("sqlite3-persistence: prepare trimToCap failed: %s",
+              sqlite3_errmsg(db)));
+    }
+    sqlite3_bind_int(stmt, 1, historyLimit);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+      throw DL_ABORT_EX(
+          fmt("sqlite3-persistence: trimToCap DELETE failed: %s",
+              sqlite3_errmsg(db)));
     }
   });
 }

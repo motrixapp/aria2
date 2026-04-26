@@ -39,12 +39,29 @@
 
 #ifdef HAVE_SQLITE3
 
+#include <cstdint>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace aria2 {
 
 class Sqlite3PersistenceStore;
 struct DownloadResult;
+
+// Filter used by countWithFilter() and search().
+struct SearchFilter {
+  // Direct download_history columns
+  std::vector<std::string> statuses; // empty = no filter
+  int64_t since = -1;                // -1 = no filter; else finished_at >= since
+  int64_t until = -1;                // -1 = no filter; else finished_at <= until
+  std::string infoHashHex;           // empty = no filter; hex bytes → info_hash
+  std::string gidPrefix;             // empty = no filter; gid LIKE ?||'%'
+  int64_t minSize = -1;              // -1 = no filter; else total_length >= ?
+  int64_t maxSize = -1;              // -1 = no filter; else total_length <= ?
+  // JOIN required
+  std::string pathLike; // empty = no filter; path LIKE ?
+};
 
 class Sqlite3DownloadResultRepository {
 public:
@@ -61,6 +78,28 @@ public:
   // download_history_file_uris (one row per URI on each fileEntry).
   // Single transaction; partial failure rolls back the whole 3-table write.
   void insert(const std::shared_ptr<DownloadResult>& dr);
+
+  // Returns total count of rows in download_history.
+  int64_t countAll() const;
+
+  // Returns count of rows matching the given filter.
+  int64_t countWithFilter(const SearchFilter& f) const;
+
+  // Returns up to num DownloadResults starting at offset, ordered by
+  // finished_at (and id) ascending (desc=false) or descending (desc=true).
+  std::vector<std::shared_ptr<DownloadResult>> range(int offset, int num,
+                                                      bool desc) const;
+
+  // Returns up to num DownloadResults matching f, starting at offset,
+  // ordered by finished_at DESC, id DESC.
+  std::vector<std::shared_ptr<DownloadResult>> search(const SearchFilter& f,
+                                                       int offset,
+                                                       int num) const;
+
+  // Removes oldest rows (FIFO) so that at most historyLimit rows remain.
+  // If historyLimit < 0, does nothing (unlimited).
+  // If keepUnfinished is true, rows with status='error' are exempt.
+  void trimToCap(int historyLimit, bool keepUnfinished);
 
 private:
   Sqlite3PersistenceStore* store_;
