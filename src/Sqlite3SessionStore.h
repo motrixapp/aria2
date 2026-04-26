@@ -66,6 +66,20 @@ public:
   void loadActiveTasksInto(std::vector<std::shared_ptr<RequestGroup>>& out,
                            const std::shared_ptr<Option>& op);
 
+  // Insert a single task row, or UPDATE if its gid already exists.
+  // New rows get queue_position = COALESCE(MAX+1, 0).
+  // On conflict: preserves created_at and queue_position; refreshes updated_at.
+  void upsertTask(const std::shared_ptr<RequestGroup>& rg);
+
+  // Delete the task row identified by gidHex.
+  void deleteTask(const std::string& gidHex);
+
+  // Update only the state column (and updated_at) for the given gid.
+  void updateTaskState(const std::string& gidHex, const std::string& state);
+
+  // Move a task to newPos using the 3-statement ranged UPDATE (spec §7.4).
+  void moveTaskPosition(const std::string& gidHex, int newPos);
+
 private:
   Sqlite3PersistenceStore* store_;
 };

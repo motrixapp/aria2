@@ -82,8 +82,39 @@ const char* const kInsertTaskSql =
     " (gid, state, serialized, queue_position, digest, created_at, updated_at)"
     " VALUES (?, ?, ?, ?, ?, ?, ?)";
 
+const char* const kUpsertTaskSql =
+    "INSERT INTO task"
+    " (gid, state, serialized, queue_position, digest, created_at, updated_at)"
+    " VALUES (?, ?, ?,"
+    "  COALESCE((SELECT MAX(queue_position)+1 FROM task), 0),"
+    "  ?, ?, ?)"
+    " ON CONFLICT(gid) DO UPDATE SET"
+    "  state      = excluded.state,"
+    "  serialized = excluded.serialized,"
+    "  digest     = excluded.digest,"
+    "  updated_at = excluded.updated_at";
+
+const char* const kDeleteTaskSql = "DELETE FROM task WHERE gid = ?";
+
+const char* const kUpdateTaskStateSql =
+    "UPDATE task SET state = ?, updated_at = ? WHERE gid = ?";
+
+const char* const kSelectQueuePosSql =
+    "SELECT queue_position FROM task WHERE gid = ?";
+
 const char* const kSelectSerializedSql =
     "SELECT serialized FROM task ORDER BY queue_position ASC";
+
+const char* const kShiftForwardSql =
+    "UPDATE task SET queue_position = queue_position - 1"
+    " WHERE queue_position > ? AND queue_position <= ?";
+
+const char* const kShiftBackwardSql =
+    "UPDATE task SET queue_position = queue_position + 1"
+    " WHERE queue_position >= ? AND queue_position < ?";
+
+const char* const kPlaceTaskPositionSql =
+    "UPDATE task SET queue_position = ? WHERE gid = ?";
 
 } // namespace
 
@@ -201,6 +232,182 @@ void Sqlite3SessionStore::loadActiveTasksInto(
 
   std::stringstream ss(combined);
   createRequestGroupForUriList(out, op, ss);
+}
+
+void Sqlite3SessionStore::upsertTask(const std::shared_ptr<RequestGroup>& rg)
+{
+  // Option A: pass nullptr — renderOneInto never dereferences rgman_.
+  SessionSerializer ser(nullptr);
+  std::string text = ser.renderOne(rg);
+  if (text.empty()) {
+    return;
+  }
+  std::string state = rg->isPauseRequested() ? "paused" : "waiting";
+
+  auto md = MessageDigest::sha1();
+  md->update(text.data(), text.size());
+  md->update(state.data(), state.size());
+  std::string digest = md->digest();
+
+  const int64_t now = currentUnixMs();
+  auto gidHex = GroupId::toHex(rg->getGID());
+
+  sqlite3* db = store_->raw();
+
+  store_->withTransaction([&]() {
+    StmtGuard stmt;
+    if (sqlite3_prepare_v2(db, kUpsertTaskSql, -1, &stmt.stmt, nullptr) !=
+        SQLITE_OK) {
+      throw DL_ABORT_EX(
+          fmt("sqlite3-persistence: prepare UPSERT task failed: %s",
+              sqlite3_errmsg(db)));
+    }
+    sqlite3_bind_text(stmt, 1, gidHex.data(),
+                      static_cast<int>(gidHex.size()), SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, state.data(),
+                      static_cast<int>(state.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, text.data(),
+                      static_cast<int>(text.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_blob(stmt, 4, digest.data(),
+                      static_cast<int>(digest.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 5, static_cast<sqlite3_int64>(now));
+    sqlite3_bind_int64(stmt, 6, static_cast<sqlite3_int64>(now));
+
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+      throw DL_ABORT_EX(
+          fmt("sqlite3-persistence: UPSERT task failed: %s",
+              sqlite3_errmsg(db)));
+    }
+  });
+}
+
+void Sqlite3SessionStore::deleteTask(const std::string& gidHex)
+{
+  sqlite3* db = store_->raw();
+
+  store_->withTransaction([&]() {
+    StmtGuard stmt;
+    if (sqlite3_prepare_v2(db, kDeleteTaskSql, -1, &stmt.stmt, nullptr) !=
+        SQLITE_OK) {
+      throw DL_ABORT_EX(
+          fmt("sqlite3-persistence: prepare DELETE task failed: %s",
+              sqlite3_errmsg(db)));
+    }
+    sqlite3_bind_text(stmt, 1, gidHex.data(),
+                      static_cast<int>(gidHex.size()), SQLITE_STATIC);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+      throw DL_ABORT_EX(
+          fmt("sqlite3-persistence: DELETE task failed: %s",
+              sqlite3_errmsg(db)));
+    }
+  });
+}
+
+void Sqlite3SessionStore::updateTaskState(const std::string& gidHex,
+                                         const std::string& state)
+{
+  const int64_t now = currentUnixMs();
+  sqlite3* db = store_->raw();
+
+  store_->withTransaction([&]() {
+    StmtGuard stmt;
+    if (sqlite3_prepare_v2(db, kUpdateTaskStateSql, -1, &stmt.stmt, nullptr) !=
+        SQLITE_OK) {
+      throw DL_ABORT_EX(
+          fmt("sqlite3-persistence: prepare UPDATE task state failed: %s",
+              sqlite3_errmsg(db)));
+    }
+    sqlite3_bind_text(stmt, 1, state.data(),
+                      static_cast<int>(state.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(now));
+    sqlite3_bind_text(stmt, 3, gidHex.data(),
+                      static_cast<int>(gidHex.size()), SQLITE_STATIC);
+
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+      throw DL_ABORT_EX(
+          fmt("sqlite3-persistence: UPDATE task state failed: %s",
+              sqlite3_errmsg(db)));
+    }
+  });
+}
+
+void Sqlite3SessionStore::moveTaskPosition(const std::string& gidHex,
+                                          int newPos)
+{
+  sqlite3* db = store_->raw();
+
+  store_->withTransaction([&]() {
+    // 1) Read oldPos
+    int oldPos = -1;
+    {
+      StmtGuard stmt;
+      if (sqlite3_prepare_v2(db, kSelectQueuePosSql, -1, &stmt.stmt,
+                             nullptr) != SQLITE_OK) {
+        throw DL_ABORT_EX(
+            fmt("sqlite3-persistence: prepare SELECT queue_position failed: %s",
+                sqlite3_errmsg(db)));
+      }
+      sqlite3_bind_text(stmt, 1, gidHex.data(),
+                        static_cast<int>(gidHex.size()), SQLITE_STATIC);
+      int rc = sqlite3_step(stmt);
+      if (rc == SQLITE_DONE) {
+        return; // gid not found — no-op
+      }
+      if (rc != SQLITE_ROW) {
+        throw DL_ABORT_EX(
+            fmt("sqlite3-persistence: SELECT queue_position step failed: %s",
+                sqlite3_errmsg(db)));
+      }
+      oldPos = sqlite3_column_int(stmt, 0);
+    }
+
+    if (oldPos == newPos) {
+      return; // already in place — no-op
+    }
+
+    // 2) Shift the affected range
+    {
+      const bool movingForward = oldPos < newPos;
+      const char* shiftSql = movingForward ? kShiftForwardSql : kShiftBackwardSql;
+      const int lower = movingForward ? oldPos : newPos;
+      const int upper = movingForward ? newPos : oldPos;
+
+      StmtGuard stmt;
+      if (sqlite3_prepare_v2(db, shiftSql, -1, &stmt.stmt, nullptr) !=
+          SQLITE_OK) {
+        throw DL_ABORT_EX(
+            fmt("sqlite3-persistence: prepare shift UPDATE failed: %s",
+                sqlite3_errmsg(db)));
+      }
+      sqlite3_bind_int(stmt, 1, lower);
+      sqlite3_bind_int(stmt, 2, upper);
+
+      if (sqlite3_step(stmt) != SQLITE_DONE) {
+        throw DL_ABORT_EX(
+            fmt("sqlite3-persistence: shift UPDATE failed: %s",
+                sqlite3_errmsg(db)));
+      }
+    }
+
+    // 3) Place the moved row
+    {
+      StmtGuard stmt;
+      if (sqlite3_prepare_v2(db, kPlaceTaskPositionSql, -1, &stmt.stmt, nullptr) !=
+          SQLITE_OK) {
+        throw DL_ABORT_EX(
+            fmt("sqlite3-persistence: prepare place UPDATE failed: %s",
+                sqlite3_errmsg(db)));
+      }
+      sqlite3_bind_int(stmt, 1, newPos);
+      sqlite3_bind_text(stmt, 2, gidHex.data(),
+                        static_cast<int>(gidHex.size()), SQLITE_STATIC);
+      if (sqlite3_step(stmt) != SQLITE_DONE) {
+        throw DL_ABORT_EX(
+            fmt("sqlite3-persistence: place UPDATE failed: %s",
+                sqlite3_errmsg(db)));
+      }
+    }
+  });
 }
 
 } // namespace aria2

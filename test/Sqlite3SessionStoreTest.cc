@@ -60,6 +60,10 @@ class Sqlite3SessionStoreTest : public CppUnit::TestFixture {
   CPPUNIT_TEST_SUITE(Sqlite3SessionStoreTest);
   CPPUNIT_TEST(testSaveAllTasksUpsertsRows);
   CPPUNIT_TEST(testSaveLoadRoundTrip);
+  CPPUNIT_TEST(testQueuePositionMove);
+  CPPUNIT_TEST(testUpsertTaskInsertsThenUpdates);
+  CPPUNIT_TEST(testDeleteTaskRemovesRow);
+  CPPUNIT_TEST(testUpdateTaskState);
   CPPUNIT_TEST_SUITE_END();
 
 private:
@@ -72,6 +76,10 @@ public:
   void tearDown() override;
   void testSaveAllTasksUpsertsRows();
   void testSaveLoadRoundTrip();
+  void testQueuePositionMove();
+  void testUpsertTaskInsertsThenUpdates();
+  void testDeleteTaskRemovesRow();
+  void testUpdateTaskState();
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION(Sqlite3SessionStoreTest);
@@ -199,6 +207,160 @@ void Sqlite3SessionStoreTest::testSaveLoadRoundTrip()
 
   std::set<a2_gid_t> wantGids{gid1, gid2};
   CPPUNIT_ASSERT(gotGids == wantGids);
+}
+
+namespace {
+
+// Helper: directly INSERT a task row for tests that need pre-seeded data.
+void insertTestRow(sqlite3* db, const std::string& gid, int pos,
+                   const std::string& state = "waiting")
+{
+  std::string sql =
+      "INSERT INTO task (gid, state, serialized, queue_position, digest,"
+      " created_at, updated_at) VALUES ('" +
+      gid + "', '" + state + "', '', " + std::to_string(pos) +
+      ", X'', 0, 0)";
+  char* errmsg = nullptr;
+  int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &errmsg);
+  if (rc != SQLITE_OK) {
+    std::string msg = errmsg ? errmsg : "unknown";
+    sqlite3_free(errmsg);
+    CPPUNIT_FAIL(("insertTestRow failed: " + msg).c_str());
+  }
+}
+
+} // namespace
+
+void Sqlite3SessionStoreTest::testQueuePositionMove()
+{
+  sqlite3* db = store_->raw();
+  for (int i = 0; i < 5; ++i) {
+    insertTestRow(db, "g" + std::to_string(i), i);
+  }
+
+  Sqlite3SessionStore session(store_.get());
+  session.moveTaskPosition("g3", 0);
+
+  sqlite3_stmt* stmt = nullptr;
+  CPPUNIT_ASSERT_EQUAL(
+      SQLITE_OK,
+      sqlite3_prepare_v2(db, "SELECT gid FROM task ORDER BY queue_position ASC",
+                         -1, &stmt, nullptr));
+
+  std::vector<std::string> expected = {"g3", "g0", "g1", "g2", "g4"};
+  for (const auto& want : expected) {
+    CPPUNIT_ASSERT_EQUAL(SQLITE_ROW, sqlite3_step(stmt));
+    const char* got =
+        reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+    CPPUNIT_ASSERT_EQUAL(want, std::string(got ? got : ""));
+  }
+  CPPUNIT_ASSERT_EQUAL(SQLITE_DONE, sqlite3_step(stmt));
+  sqlite3_finalize(stmt);
+}
+
+void Sqlite3SessionStoreTest::testUpsertTaskInsertsThenUpdates()
+{
+  auto makeRG = [&](const std::string& uri) {
+    auto dctx = std::make_shared<DownloadContext>(0, 0, "");
+    dctx->getFirstFileEntry()->addUri(uri);
+    auto rg = std::make_shared<RequestGroup>(GroupId::create(), option_);
+    rg->setDownloadContext(dctx);
+    return rg;
+  };
+
+  auto rg = makeRG("http://example.com/file1.bin");
+  Sqlite3SessionStore session(store_.get());
+  session.upsertTask(rg);
+
+  sqlite3* db = store_->raw();
+
+  {
+    sqlite3_stmt* stmt = nullptr;
+    CPPUNIT_ASSERT_EQUAL(
+        SQLITE_OK,
+        sqlite3_prepare_v2(
+            db, "SELECT COUNT(*), queue_position, state FROM task", -1, &stmt,
+            nullptr));
+    CPPUNIT_ASSERT_EQUAL(SQLITE_ROW, sqlite3_step(stmt));
+    CPPUNIT_ASSERT_EQUAL(1, sqlite3_column_int(stmt, 0));
+    CPPUNIT_ASSERT_EQUAL(0, sqlite3_column_int(stmt, 1));
+    const char* state =
+        reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+    CPPUNIT_ASSERT_EQUAL(std::string("waiting"),
+                         std::string(state ? state : ""));
+    sqlite3_finalize(stmt);
+  }
+
+  int64_t createdAt = 0;
+  {
+    sqlite3_stmt* stmt = nullptr;
+    CPPUNIT_ASSERT_EQUAL(
+        SQLITE_OK,
+        sqlite3_prepare_v2(db, "SELECT created_at FROM task", -1, &stmt,
+                           nullptr));
+    CPPUNIT_ASSERT_EQUAL(SQLITE_ROW, sqlite3_step(stmt));
+    createdAt = sqlite3_column_int64(stmt, 0);
+    sqlite3_finalize(stmt);
+  }
+
+  rg->setPauseRequested(true);
+  session.upsertTask(rg);
+
+  {
+    sqlite3_stmt* stmt = nullptr;
+    CPPUNIT_ASSERT_EQUAL(
+        SQLITE_OK,
+        sqlite3_prepare_v2(
+            db,
+            "SELECT COUNT(*), queue_position, state, created_at FROM task", -1,
+            &stmt, nullptr));
+    CPPUNIT_ASSERT_EQUAL(SQLITE_ROW, sqlite3_step(stmt));
+    CPPUNIT_ASSERT_EQUAL(1, sqlite3_column_int(stmt, 0));
+    CPPUNIT_ASSERT_EQUAL(0, sqlite3_column_int(stmt, 1));
+    const char* state =
+        reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+    CPPUNIT_ASSERT_EQUAL(std::string("paused"),
+                         std::string(state ? state : ""));
+    CPPUNIT_ASSERT_EQUAL(createdAt, sqlite3_column_int64(stmt, 3));
+    sqlite3_finalize(stmt);
+  }
+}
+
+void Sqlite3SessionStoreTest::testDeleteTaskRemovesRow()
+{
+  sqlite3* db = store_->raw();
+  insertTestRow(db, "abc", 0);
+
+  Sqlite3SessionStore session(store_.get());
+  session.deleteTask("abc");
+
+  sqlite3_stmt* stmt = nullptr;
+  CPPUNIT_ASSERT_EQUAL(
+      SQLITE_OK,
+      sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM task", -1, &stmt, nullptr));
+  CPPUNIT_ASSERT_EQUAL(SQLITE_ROW, sqlite3_step(stmt));
+  CPPUNIT_ASSERT_EQUAL(0, sqlite3_column_int(stmt, 0));
+  sqlite3_finalize(stmt);
+}
+
+void Sqlite3SessionStoreTest::testUpdateTaskState()
+{
+  sqlite3* db = store_->raw();
+  insertTestRow(db, "abc", 0, "waiting");
+
+  Sqlite3SessionStore session(store_.get());
+  session.updateTaskState("abc", "paused");
+
+  sqlite3_stmt* stmt = nullptr;
+  CPPUNIT_ASSERT_EQUAL(
+      SQLITE_OK,
+      sqlite3_prepare_v2(db, "SELECT state FROM task WHERE gid='abc'", -1,
+                         &stmt, nullptr));
+  CPPUNIT_ASSERT_EQUAL(SQLITE_ROW, sqlite3_step(stmt));
+  const char* state =
+      reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+  CPPUNIT_ASSERT_EQUAL(std::string("paused"), std::string(state ? state : ""));
+  sqlite3_finalize(stmt);
 }
 
 } // namespace aria2
