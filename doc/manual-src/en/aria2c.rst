@@ -1684,6 +1684,41 @@ Advanced Options
   :option:`--save-session` option every SEC seconds. If ``0`` is
   given, file will be saved only when aria2 exits. Default: ``0``
 
+.. option:: --enable-sqlite3-persistence [true|false]
+
+  Enable SQLite3-backed persistence as a replacement for the legacy
+  ``aria2.session`` text file and per-download ``.aria2`` control files.
+  When ``true``, aria2 reads/writes the active task list, per-download
+  piece progress, and completed/failed history through a single SQLite3
+  database. When ``false`` (default), aria2 uses the legacy text session
+  file and binary ``.aria2`` control files. See also
+  :option:`--sqlite3-db-path` and :option:`--sqlite3-history-limit`.
+
+  Default: ``false``
+
+.. option:: --sqlite3-db-path=<FILE>
+
+  Path to the SQLite3 database file when
+  :option:`--enable-sqlite3-persistence` is ``true``. The file is created
+  with mode 0600 if it does not exist. The parent directory must exist
+  and be writable; otherwise aria2 exits with a fatal error at startup.
+
+  Default: ``<--dir>/aria2.db`` (or ``aria2.db`` in the current working
+  directory if :option:`--dir` is not set)
+
+.. option:: --sqlite3-history-limit=<N>
+
+  Maximum number of completed/failed download history rows kept in the
+  SQLite3 database. ``-1`` (default) means unlimited. ``0`` means no
+  history is kept (matches ``--max-download-result=0``). A positive
+  integer N keeps the most recent N records (FIFO; oldest by
+  ``finished_at`` deleted first). Records exempted by
+  :option:`--keep-unfinished-download-result` (status ``error`` rows)
+  are not counted toward this cap. No effect when
+  :option:`--enable-sqlite3-persistence` is ``false``.
+
+  Default: ``-1``
+
 
 .. option:: --socket-recv-buffer-size=<SIZE>
 
@@ -3547,8 +3582,136 @@ For information on the *secret* parameter, see :ref:`rpc_auth`.
 .. function:: aria2.saveSession([secret])
 
   This method saves the current session to a file specified by the
-  :option:`--save-session` option. This method returns ``OK`` if it
-  succeeds.
+  :option:`--save-session` option. In SQLite3 persistence mode, this
+  method also flushes the in-memory request group state to the
+  database. Either backend's failure is logged but does not abort the
+  RPC; only failure of all configured backends raises an error. This
+  method returns ``OK`` if at least one backend succeeded.
+
+.. function:: aria2.getDownloadResultCount([secret], [filter])
+
+  Returns the count of completed/failed download history rows in the
+  SQLite3 database. Available only when
+  :option:`--enable-sqlite3-persistence` is ``true``.
+
+  *filter* is an optional struct with the following keys (all optional):
+
+  ``status``
+
+      Status string, one of ``complete``, ``error``, or ``removed``.
+
+  ``since``
+
+      Lower bound on ``finished_at`` (Unix milliseconds). Records with
+      ``finished_at >= since`` are counted.
+
+  ``until``
+
+      Upper bound on ``finished_at`` (Unix milliseconds). Records with
+      ``finished_at <= until`` are counted.
+
+  Response: a struct with one key, ``count``, holding the count as a
+  string (string-quoted to avoid JSON's 53-bit integer limit).
+
+  Errors: ``"SQLite3 persistence is not enabled"`` when not in SQLite
+  mode.
+
+.. function:: aria2.searchDownloadResult([secret], query, offset, num, [keys])
+
+  Filtered paginated search of the SQLite3 download history. *offset*
+  is non-negative; results are ordered ``finished_at DESC, id DESC``.
+
+  *query* is a struct with the following optional keys:
+
+  ``status``
+
+      String or array of strings. Filters records to those with
+      matching status (``complete``, ``error``, or ``removed``).
+
+  ``since`` / ``until``
+
+      Lower / upper bound on ``finished_at`` (Unix milliseconds).
+
+  ``infoHash``
+
+      Hex-encoded BitTorrent info hash. Filters to records whose
+      ``info_hash`` column equals the binary form of this string.
+
+  ``pathLike``
+
+      SQL ``LIKE`` pattern. Filters to records whose file paths (as
+      stored in the per-file table) match the pattern.
+
+  ``gidPrefix``
+
+      Filters to records whose GID begins with this prefix.
+
+  ``minSize`` / ``maxSize``
+
+      Lower / upper bound on the total length in bytes.
+
+  *keys* is an optional array of strings; if specified, only those
+  fields appear in each entry. Otherwise the full
+  :func:`aria2.tellStatus`-shaped entry is returned.
+
+  Response: an array of structs, each shaped like
+  :func:`aria2.tellStatus`.
+
+  Errors: ``"SQLite3 persistence is not enabled"``;
+  ``"Invalid query: ..."``.
+
+.. function:: aria2.exportSession([secret], path)
+
+  Writes the current in-memory request group state to *path* in the
+  input-file text format (the same format consumed by :option:`-i`).
+  This method does NOT touch the SQLite3 database.
+
+  Distinct from :func:`aria2.saveSession`: that method writes to the
+  configured :option:`--save-session` path and SQLite3 store; this
+  method writes to an arbitrary path supplied at RPC time and does not
+  require either of those to be configured.
+
+  Response: ``"OK"``.
+
+  Errors: ``"Failed to write session export to '<path>'"``;
+  ``"Invalid path"``.
+
+.. function:: aria2.requeueDownloadResult([secret], gid, [options])
+
+  Re-creates a request group from a completed or failed
+  ``download_history`` record using the following decision tree:
+
+  1. If the record is BitTorrent and
+     ``<dir>/<hex(info_hash)>.torrent`` exists on disk (saved by
+     :option:`--bt-save-metadata`), reload the torrent file.
+     ``strategy`` = ``bt-save-metadata-file``.
+  2. Else if ``bt_local_path`` is set on the record and the file
+     exists, reload that local ``.torrent`` or ``.metalink`` file.
+     ``strategy`` = ``local-metadata-file``.
+  3. Else if ``metadata_uri`` is a magnet link or an HTTP(S) URL
+     ending in ``.torrent``, ``.metalink``, or ``.meta4``, add it as
+     a URI download. ``strategy`` = ``source-uri``.
+  4. Else if ``serialized`` (the stored session text) is non-empty,
+     parse it as input-file format. ``strategy`` =
+     ``serialized-text``.
+  5. Else if the record is BitTorrent and ``info_hash`` is non-NULL,
+     synthesize ``magnet:?xt=urn:btih:<hex>&dn=<bt_name>&tr=<...>``
+     from ``bt_announce_list``. ``strategy`` =
+     ``synthesized-magnet``.
+  6. Else, throw with a hint to enable :option:`--bt-save-metadata`
+     to make BT tasks fully requeueable.
+
+  The new request group receives a fresh GID; it does NOT reuse the
+  historical one. The optional *options* struct (same shape as
+  :func:`aria2.addUri`'s ``options``) is shallow-merged onto the new
+  request group.
+
+  Response: a struct with two keys: ``gid`` (the freshly assigned
+  GID) and ``strategy`` (one of the values above).
+
+  Errors: ``"No record found for GID#..."``;
+  ``"Record is not requeueable (no recoverable source); enable --bt-save-metadata=true to make BT tasks fully requeueable"``;
+  ``"SQLite3 persistence is not enabled"``.
 
 .. function:: system.multicall(methods)
 
