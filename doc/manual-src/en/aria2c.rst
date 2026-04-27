@@ -3161,6 +3161,17 @@ For information on the *secret* parameter, see :ref:`rpc_auth`.
   The response is an array of the same structs as returned by the
   :func:`aria2.tellStatus` method.
 
+  In SQLite3 persistence mode, the result list is the ordered union of
+  rows from the ``download_history`` table (oldest first) followed by
+  in-memory stopped entries (oldest first); pagination via *offset* and
+  *num* spans both sources seamlessly. DB-reconstructed entries include
+  full ``files[].uris[]`` data from the ``download_history`` table.
+  For BitTorrent records, the ``bittorrent.info`` struct contains only
+  ``name``, ``announceList``, ``comment``, ``creationDate``, and
+  ``mode``; piece hashes are not stored. Clients that require piece
+  hashes can call :func:`aria2.requeueDownloadResult` to bring the task
+  back to active state before inspecting it.
+
 .. function:: aria2.changePosition([secret], gid, pos, how)
 
   This method changes the position of the download denoted by
@@ -3458,10 +3469,22 @@ For information on the *secret* parameter, see :ref:`rpc_auth`.
   This method purges completed/error/removed downloads to free memory.
   This method returns ``OK``.
 
+  In SQLite3 persistence mode, this method also issues
+  ``DELETE FROM download_history WHERE status IN
+  ('complete','error','removed')``, clearing the full persisted
+  history for those statuses. Rows for active downloads are not
+  affected. Requires :option:`--enable-sqlite3-persistence` to be
+  enabled.
+
 .. function:: aria2.removeDownloadResult([secret], gid)
 
   This method removes a completed/error/removed download denoted by *gid*
   from memory. This method returns ``OK`` for success.
+
+  In SQLite3 persistence mode, the in-memory stopped cache is checked
+  first; if the GID is not found there, the corresponding row is
+  deleted directly from the ``download_history`` table. The method
+  raises an error if the GID is present in neither location.
 
   The following examples remove the download result of the download
   GID#2089b05ecca3d829.
