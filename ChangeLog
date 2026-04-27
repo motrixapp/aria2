@@ -1,0 +1,7 @@
+* New: SQLite3-backed session and progress persistence (--enable-sqlite3-persistence).
+* New: aria2.getDownloadResultCount, aria2.searchDownloadResult,
+       aria2.exportSession, aria2.requeueDownloadResult RPC methods.
+* New: --sqlite3-db-path, --sqlite3-history-limit options.
+* New: FEATURE_SQLITE3_PERSISTENCE in --version output and aria2.getVersion.
+* Fix: aria2.saveSession RPC writes to all configured session backends
+       (was: text only); behavior matches periodic --save-session-interval flush.
