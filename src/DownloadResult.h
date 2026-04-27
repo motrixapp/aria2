@@ -91,6 +91,27 @@ struct DownloadResult {
 
   std::string dir;
 
+  // Serialized session text (URI list + option lines) produced by
+  // SessionSerializer::renderResult at insert time.  Used by
+  // requeueDownloadResult (priority 4) to recreate the RequestGroup.
+  std::string serialized;
+
+  // URI of the metadata source (magnet, .torrent URL, .metalink URL).
+  // Stored in download_history.metadata_uri.
+  std::string metadataUri;
+
+  // BitTorrent display name (bt_name column).
+  std::string btName;
+
+  // BitTorrent announce list serialized as newline-separated tiers
+  // where trackers within a tier are separated by ';'.
+  // Stored in download_history.bt_announce_list.
+  std::string btAnnounceList;
+
+  // Path to a locally saved .torrent or .metalink file.
+  // Stored in download_history.bt_local_path.
+  std::string btLocalPath;
+
   size_t numPieces;
 
   int32_t pieceLength;

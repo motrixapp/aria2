@@ -113,6 +113,10 @@ public:
                                                        int offset,
                                                        int num) const;
 
+  // Returns the DownloadResult matching gid, or nullptr if not found.
+  // Also loads file entries (with URIs) for the matched row.
+  std::shared_ptr<DownloadResult> fetchByGid(a2_gid_t gid) const;
+
   // Removes oldest rows (FIFO) so that at most historyLimit rows remain.
   // If historyLimit < 0, does nothing (unlimited).
   // If keepUnfinished is true, rows with status='error' are exempt.

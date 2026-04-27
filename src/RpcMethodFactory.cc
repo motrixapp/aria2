@@ -92,6 +92,7 @@ std::vector<std::string> rpcMethodNames = {
     "aria2.getDownloadResultCount",
     "aria2.searchDownloadResult",
     "aria2.exportSession",
+    "aria2.requeueDownloadResult",
 #endif // HAVE_SQLITE3
     "system.multicall",
     "system.listMethods",
@@ -265,6 +266,9 @@ std::unique_ptr<RpcMethod> createMethod(const std::string& methodName)
   }
   if (methodName == ExportSessionRpcMethod::getMethodName()) {
     return make_unique<ExportSessionRpcMethod>();
+  }
+  if (methodName == RequeueDownloadResultRpcMethod::getMethodName()) {
+    return make_unique<RequeueDownloadResultRpcMethod>();
   }
 #endif // HAVE_SQLITE3
 

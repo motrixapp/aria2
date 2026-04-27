@@ -525,6 +525,18 @@ protected:
 public:
   static const char* getMethodName() { return "aria2.exportSession"; }
 };
+
+class RequeueDownloadResultRpcMethod : public RpcMethod {
+protected:
+  std::unique_ptr<ValueBase> process(const RpcRequest& req,
+                                     DownloadEngine* e) override;
+
+public:
+  static const char* getMethodName()
+  {
+    return "aria2.requeueDownloadResult";
+  }
+};
 #endif // HAVE_SQLITE3
 
 class ForceShutdownRpcMethod : public RpcMethod {

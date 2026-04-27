@@ -131,6 +131,15 @@ const char* const kRangeDescSql =
     " ORDER BY finished_at DESC, id DESC"
     " LIMIT ? OFFSET ?";
 
+const char* const kFetchByGidSql =
+    "SELECT id, gid, status, result_code, result_message, total_length,"
+    "       completed_length, upload_length, num_pieces, piece_length,"
+    "       bitfield, info_hash, dir, belongs_to, following, followed_by,"
+    "       in_memory, serialized, metadata_uri,"
+    "       bt_name, bt_announce_list, bt_comment, bt_creation_date, bt_mode,"
+    "       bt_is_private, bt_local_path, finished_at"
+    " FROM download_history WHERE gid = ? LIMIT 1";
+
 const char* const kSelectFilesSql =
     "SELECT file_index, path, length, selected"
     " FROM download_history_files"
@@ -240,9 +249,54 @@ std::shared_ptr<DownloadResult> rowToDr(sqlite3_stmt* stmt)
   // col 16: in_memory
   dr->inMemoryDownload = sqlite3_column_int(stmt, 16) != 0;
 
-  // col 17: serialized — not needed for reconstruction shape
-  // col 18: metadata_uri — skip for now
-  // BT cols 19-25: skip for v1
+  // col 17: serialized
+  if (sqlite3_column_type(stmt, 17) != SQLITE_NULL) {
+    const char* ser =
+        reinterpret_cast<const char*>(sqlite3_column_text(stmt, 17));
+    if (ser) {
+      dr->serialized = ser;
+    }
+  }
+
+  // col 18: metadata_uri
+  if (sqlite3_column_type(stmt, 18) != SQLITE_NULL) {
+    const char* muri =
+        reinterpret_cast<const char*>(sqlite3_column_text(stmt, 18));
+    if (muri) {
+      dr->metadataUri = muri;
+    }
+  }
+
+  // col 19: bt_name
+  if (sqlite3_column_type(stmt, 19) != SQLITE_NULL) {
+    const char* btn =
+        reinterpret_cast<const char*>(sqlite3_column_text(stmt, 19));
+    if (btn) {
+      dr->btName = btn;
+    }
+  }
+
+  // col 20: bt_announce_list
+  if (sqlite3_column_type(stmt, 20) != SQLITE_NULL) {
+    const char* btal =
+        reinterpret_cast<const char*>(sqlite3_column_text(stmt, 20));
+    if (btal) {
+      dr->btAnnounceList = btal;
+    }
+  }
+
+  // cols 21-24: bt_comment, bt_creation_date, bt_mode, bt_is_private — not on DR
+
+  // col 25: bt_local_path
+  if (sqlite3_column_type(stmt, 25) != SQLITE_NULL) {
+    const char* btlp =
+        reinterpret_cast<const char*>(sqlite3_column_text(stmt, 25));
+    if (btlp) {
+      dr->btLocalPath = btlp;
+    }
+  }
+
+  // col 26: finished_at — not on DR struct
 
   return dr;
 }
@@ -790,6 +844,31 @@ void Sqlite3DownloadResultRepository::trimToCap(int historyLimit,
               sqlite3_errmsg(db)));
     }
   });
+}
+
+std::shared_ptr<DownloadResult>
+Sqlite3DownloadResultRepository::fetchByGid(a2_gid_t gid) const
+{
+  std::string gidHex = GroupId::toHex(gid);
+  sqlite3* db = store_->raw();
+  StmtGuard stmt;
+  if (sqlite3_prepare_v2(db, kFetchByGidSql, -1, &stmt.stmt, nullptr) !=
+      SQLITE_OK) {
+    throw DL_ABORT_EX(
+        fmt("sqlite3-persistence: prepare fetchByGid failed: %s",
+            sqlite3_errmsg(db)));
+  }
+  sqlite3_bind_text(stmt, 1, gidHex.data(),
+                    static_cast<int>(gidHex.size()), SQLITE_STATIC);
+
+  std::shared_ptr<DownloadResult> dr;
+  int rc = sqlite3_step(stmt);
+  if (rc == SQLITE_ROW) {
+    int64_t historyId = sqlite3_column_int64(stmt, 0);
+    dr = rowToDr(stmt);
+    dr->fileEntries = loadFileEntriesForHistoryId(db, historyId);
+  }
+  return dr;
 }
 
 bool Sqlite3DownloadResultRepository::deleteByGid(a2_gid_t gid)

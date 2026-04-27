@@ -82,6 +82,7 @@
 #ifdef HAVE_SQLITE3
 #  include "Sqlite3SessionStore.h"
 #  include "Sqlite3DownloadResultRepository.h"
+#  include "File.h"
 #endif // HAVE_SQLITE3
 
 namespace aria2 {
@@ -1653,6 +1654,226 @@ GetDownloadResultCountRpcMethod::process(const RpcRequest& req,
   auto r = Dict::g();
   r->put("count", String::g(util::itos(count)));
   return std::move(r);
+}
+
+std::unique_ptr<ValueBase>
+RequeueDownloadResultRpcMethod::process(const RpcRequest& req,
+                                        DownloadEngine* e)
+{
+  const String* gidParam = checkRequiredParam<String>(req, 0);
+  const Dict* optsParam = checkParam<Dict>(req, 1);
+
+  // Historical GIDs are not in the live GroupId registry, so we cannot use
+  // str2Gid() (which calls expandUnique).  Decode directly via toNumericId.
+  a2_gid_t gid = 0;
+  switch (GroupId::toNumericId(gid, gidParam->s().c_str())) {
+  case GroupId::ERR_INVALID:
+    throw DL_ABORT_EX(
+        fmt("Invalid GID %s", gidParam->s().c_str()));
+  default:
+    break;
+  }
+
+  auto* repo = e->getRequestGroupMan()->getRepository();
+  if (!repo) {
+    throw DL_ABORT_EX("SQLite3 persistence is not enabled");
+  }
+
+  auto dr = repo->fetchByGid(gid);
+  if (!dr) {
+    throw DL_ABORT_EX(fmt("No record found for GID#%s",
+                          GroupId::toHex(gid).c_str()));
+  }
+
+  // Release the GroupId slot held by the fetched DR.  rowToDr re-imported the
+  // historical GID into the live registry; we must free it now so that a fresh
+  // GID can be assigned to the new RequestGroup (spec: new RG gets a new GID).
+  // We also strip the "gid=" line from dr->serialized so that
+  // createRequestGroupForUriList does not try to re-import the old GID.
+  dr->gid.reset();
+  if (!dr->serialized.empty()) {
+    // Remove any option line that starts with " gid=" or "\t gid=".
+    // Session lines are " <key>=<value>\n".
+    std::string& s = dr->serialized;
+    std::string filtered;
+    filtered.reserve(s.size());
+    std::istringstream ss2(s);
+    std::string line;
+    while (std::getline(ss2, line)) {
+      // Options lines start with whitespace; URI lines do not.
+      bool isGidLine = false;
+      if (!line.empty() && (line[0] == ' ' || line[0] == '\t')) {
+        // Trim leading whitespace to get "key=value".
+        size_t keyStart = line.find_first_not_of(" \t");
+        if (keyStart != std::string::npos &&
+            line.compare(keyStart, 4, "gid=") == 0) {
+          isGidLine = true;
+        }
+      }
+      if (!isGidLine) {
+        filtered += line;
+        filtered += '\n';
+      }
+    }
+    dr->serialized = std::move(filtered);
+  }
+
+  // Build request option: clone engine option, then apply user-supplied opts.
+  auto requestOption = std::make_shared<Option>(*e->getOption());
+  if (optsParam) {
+    gatherRequestOption(requestOption.get(), optsParam);
+  }
+
+  std::vector<std::shared_ptr<RequestGroup>> result;
+  std::string strategy;
+
+  // Priority 1: BT + <dir>/<hex(info_hash)>.torrent file exists on disk
+#ifdef ENABLE_BITTORRENT
+  if (!dr->infoHash.empty()) {
+    std::string hexHash = util::toHex(dr->infoHash);
+    std::string saveDir = dr->dir.empty() ? requestOption->get(PREF_DIR)
+                                          : dr->dir;
+    std::string btSavePath = util::applyDir(saveDir, hexHash + ".torrent");
+    if (File(btSavePath).exists()) {
+      requestOption->put(PREF_TORRENT_FILE, btSavePath);
+      createRequestGroupForBitTorrent(result, requestOption,
+                                      std::vector<std::string>{},
+                                      btSavePath);
+      if (!result.empty()) {
+        strategy = "bt-save-metadata-file";
+      }
+    }
+  }
+#endif // ENABLE_BITTORRENT
+
+  // Priority 2: bt_local_path != NULL AND file exists
+  if (strategy.empty()) {
+    if (!dr->btLocalPath.empty() && File(dr->btLocalPath).exists()) {
+      // Determine if it's a torrent or metalink by extension.
+      const std::string& lp = dr->btLocalPath;
+      bool isTorrent = (lp.size() >= 8 &&
+                        lp.compare(lp.size() - 8, 8, ".torrent") == 0);
+      bool isMetalink = (!isTorrent &&
+                         ((lp.size() >= 9 &&
+                           lp.compare(lp.size() - 9, 9, ".metalink") == 0) ||
+                          (lp.size() >= 6 &&
+                           lp.compare(lp.size() - 6, 6, ".meta4") == 0)));
+      if (isTorrent) {
+#ifdef ENABLE_BITTORRENT
+        requestOption->put(PREF_TORRENT_FILE, lp);
+        createRequestGroupForBitTorrent(result, requestOption,
+                                        std::vector<std::string>{}, lp);
+        if (!result.empty()) {
+          strategy = "local-metadata-file";
+        }
+#endif // ENABLE_BITTORRENT
+      } else if (isMetalink) {
+#ifdef ENABLE_METALINK
+        requestOption->put(PREF_METALINK_FILE, lp);
+        createRequestGroupForMetalink(result, requestOption);
+        if (!result.empty()) {
+          strategy = "local-metadata-file";
+        }
+#endif // ENABLE_METALINK
+      }
+    }
+  }
+
+  // Priority 3: metadata_uri matches ^magnet: or ^https?://.*\.(torrent|metalink|meta4)$
+  if (strategy.empty() && !dr->metadataUri.empty()) {
+    bool isMetadataUri =
+        (dr->metadataUri.compare(0, 7, "magnet:") == 0);
+    if (!isMetadataUri && (dr->metadataUri.compare(0, 7, "http://") == 0 ||
+                            dr->metadataUri.compare(0, 8, "https://") == 0)) {
+      const std::string& url = dr->metadataUri;
+      auto qmark = url.find_first_of("?#");
+      size_t searchEnd = (qmark == std::string::npos) ? url.size() : qmark;
+      size_t p = url.rfind('.', searchEnd > 0 ? searchEnd - 1 : 0);
+      if (p != std::string::npos && p < searchEnd) {
+        std::string ext = url.substr(p, searchEnd - p);
+        if (ext == ".torrent" || ext == ".metalink" || ext == ".meta4") {
+          isMetadataUri = true;
+        }
+      }
+    }
+    if (isMetadataUri) {
+      createRequestGroupForUri(result, requestOption,
+                               std::vector<std::string>{dr->metadataUri},
+                               /*ignoreForceSeq=*/true,
+                               /*ignoreLocalPath=*/true);
+      if (!result.empty()) {
+        strategy = "source-uri";
+      }
+    }
+  }
+
+  // Priority 4: serialized != ''
+  if (strategy.empty() && !dr->serialized.empty()) {
+    std::istringstream ss(dr->serialized);
+    createRequestGroupForUriList(result, requestOption, ss);
+    if (!result.empty()) {
+      strategy = "serialized-text";
+    }
+  }
+
+  // Priority 5: BT + info_hash != NULL → synthesize magnet
+#ifdef ENABLE_BITTORRENT
+  if (strategy.empty() && !dr->infoHash.empty()) {
+    std::string magnet =
+        "magnet:?xt=urn:btih:" + util::toHex(dr->infoHash);
+    if (!dr->btName.empty()) {
+      magnet += "&dn=" + util::percentEncode(dr->btName);
+    }
+    // bt_announce_list: tiers separated by '\n', trackers within tier by ';'
+    if (!dr->btAnnounceList.empty()) {
+      std::istringstream tierStream(dr->btAnnounceList);
+      std::string tier;
+      while (std::getline(tierStream, tier)) {
+        if (tier.empty()) continue;
+        // Take first tracker per tier (up to ';')
+        auto semi = tier.find(';');
+        std::string tracker = (semi != std::string::npos)
+                                  ? tier.substr(0, semi)
+                                  : tier;
+        if (!tracker.empty()) {
+          magnet += "&tr=" + util::percentEncode(tracker);
+        }
+      }
+    }
+    createRequestGroupForUri(result, requestOption,
+                             std::vector<std::string>{magnet},
+                             /*ignoreForceSeq=*/true,
+                             /*ignoreLocalPath=*/true);
+    if (!result.empty()) {
+      strategy = "synthesized-magnet";
+    }
+  }
+#endif // ENABLE_BITTORRENT
+
+  // Priority 6: all fail
+  if (strategy.empty() || result.empty()) {
+    throw DL_ABORT_EX(
+        "Record is not requeueable (no recoverable source); "
+        "enable --bt-save-metadata=true to make BT tasks fully requeueable");
+  }
+
+  // Add to reserved queue (fresh GID already assigned by createRequestGroup*).
+  e->getRequestGroupMan()->addReservedGroup(result);
+
+  // UPSERT into task table.
+  if (auto* ss = e->getSqlite3SessionStore()) {
+    try {
+      ss->upsertTask(result.front());
+    }
+    catch (RecoverableException& ex) {
+      A2_LOG_ERROR_EX("sqlite3-persistence: requeue task UPSERT failed", ex);
+    }
+  }
+
+  auto resp = Dict::g();
+  resp->put("gid", GroupId::toHex(result.front()->getGID()));
+  resp->put("strategy", strategy);
+  return std::move(resp);
 }
 #endif // HAVE_SQLITE3
 

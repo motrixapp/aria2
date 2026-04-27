@@ -103,6 +103,9 @@ class RpcMethodTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testGetDownloadResultCount);
   CPPUNIT_TEST(testSearchByPathLikeAndStatus);
   CPPUNIT_TEST(testExportSessionWritesSerializerOutput);
+  CPPUNIT_TEST(testRequeueViaSerializedText);
+  CPPUNIT_TEST(testRequeueFailsWhenNothingAvailable);
+  CPPUNIT_TEST(testRequeueViaSourceUri);
 #endif // HAVE_SQLITE3
   CPPUNIT_TEST_SUITE_END();
 
@@ -183,6 +186,9 @@ public:
   void testGetDownloadResultCount();
   void testSearchByPathLikeAndStatus();
   void testExportSessionWritesSerializerOutput();
+  void testRequeueViaSerializedText();
+  void testRequeueFailsWhenNothingAvailable();
+  void testRequeueViaSourceUri();
 #endif // HAVE_SQLITE3
 };
 
@@ -1889,6 +1895,198 @@ void RpcMethodTest::testExportSessionWritesSerializerOutput()
   CPPUNIT_ASSERT(File(outPath).exists());
 
   std::remove(outPath.c_str());
+}
+#endif // HAVE_SQLITE3
+
+#ifdef HAVE_SQLITE3
+void RpcMethodTest::testRequeueViaSerializedText()
+{
+  std::string dbPath =
+      std::string(A2_TEST_OUT_DIR) + "/requeue_serialized.db";
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+
+  auto store = make_unique<Sqlite3PersistenceStore>(dbPath);
+  store->open();
+  e_->setSqlite3Store(std::move(store));
+  auto repo = make_unique<Sqlite3DownloadResultRepository>(
+      e_->getSqlite3Store());
+  e_->getRequestGroupMan()->setRepository(repo.get());
+
+  // Construct a DR with a file entry that has a URI so that
+  // SessionSerializer::renderResult produces non-empty serialized text.
+  auto dr = std::make_shared<DownloadResult>();
+  dr->gid = GroupId::create();
+  dr->result = error_code::FINISHED;
+  dr->option = option_;
+  auto fe = std::make_shared<FileEntry>("/tmp/requeue.bin", 1024, 0);
+  fe->addUri("http://example.com/requeue.bin");
+  dr->fileEntries.push_back(std::move(fe));
+  dr->totalLength = 1024;
+  dr->completedLength = 1024;
+  dr->numPieces = static_cast<size_t>(1);
+  dr->pieceLength = 1024;
+
+  repo->insert(dr);
+  a2_gid_t historicalGid = dr->gid->getNumericId();
+  // Free the GroupId slot so that requeue can use create() safely.
+  dr.reset();
+
+  RequeueDownloadResultRpcMethod m;
+  auto req = createReq(RequeueDownloadResultRpcMethod::getMethodName());
+  req.params->append(GroupId::toHex(historicalGid));
+  auto res = m.execute(std::move(req), e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+
+  const Dict* respDict = downcast<Dict>(res.param.get());
+  CPPUNIT_ASSERT(respDict != nullptr);
+  CPPUNIT_ASSERT_EQUAL(std::string("serialized-text"),
+                       getString(respDict, "strategy"));
+  // The new GID should differ from the historical GID.
+  CPPUNIT_ASSERT(getString(respDict, "gid") !=
+                 GroupId::toHex(historicalGid));
+
+  // Verify a new RG was added to reservedGroups.
+  CPPUNIT_ASSERT_EQUAL(
+      static_cast<size_t>(1),
+      e_->getRequestGroupMan()->getReservedGroups().size());
+
+  e_->getRequestGroupMan()->setRepository(nullptr);
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+}
+#endif // HAVE_SQLITE3
+
+#ifdef HAVE_SQLITE3
+void RpcMethodTest::testRequeueFailsWhenNothingAvailable()
+{
+  std::string dbPath =
+      std::string(A2_TEST_OUT_DIR) + "/requeue_fail.db";
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+
+  auto store = make_unique<Sqlite3PersistenceStore>(dbPath);
+  store->open();
+  e_->setSqlite3Store(std::move(store));
+  auto repo = make_unique<Sqlite3DownloadResultRepository>(
+      e_->getSqlite3Store());
+  e_->getRequestGroupMan()->setRepository(repo.get());
+
+  // DR with NO recoverable source: no URI (so serialized=''), no info_hash,
+  // no metadata_uri, no bt_local_path.
+  auto dr = std::make_shared<DownloadResult>();
+  dr->gid = GroupId::create();
+  dr->result = error_code::FINISHED;
+  dr->option = option_;
+  // FileEntry with no URI: renderResult returns empty string.
+  dr->fileEntries.push_back(
+      std::make_shared<FileEntry>("/tmp/requeue_empty.bin", 0, 0));
+  dr->totalLength = 0;
+  dr->completedLength = 0;
+  dr->numPieces = static_cast<size_t>(1);
+  dr->pieceLength = 1024;
+
+  repo->insert(dr);
+  a2_gid_t historicalGid = dr->gid->getNumericId();
+  dr.reset();
+
+  RequeueDownloadResultRpcMethod m;
+  auto req = createReq(RequeueDownloadResultRpcMethod::getMethodName());
+  req.params->append(GroupId::toHex(historicalGid));
+  auto res = m.execute(std::move(req), e_.get());
+  // All priorities exhausted: should fail with code != 0.
+  CPPUNIT_ASSERT(res.code != 0);
+
+  // No RG should have been added.
+  CPPUNIT_ASSERT_EQUAL(
+      static_cast<size_t>(0),
+      e_->getRequestGroupMan()->getReservedGroups().size());
+
+  e_->getRequestGroupMan()->setRepository(nullptr);
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+}
+#endif // HAVE_SQLITE3
+
+#ifdef HAVE_SQLITE3
+void RpcMethodTest::testRequeueViaSourceUri()
+{
+  std::string dbPath =
+      std::string(A2_TEST_OUT_DIR) + "/requeue_sourceuri.db";
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+
+  auto store = make_unique<Sqlite3PersistenceStore>(dbPath);
+  store->open();
+  e_->setSqlite3Store(std::move(store));
+  auto repo = make_unique<Sqlite3DownloadResultRepository>(
+      e_->getSqlite3Store());
+  e_->getRequestGroupMan()->setRepository(repo.get());
+
+  // DR with no file URIs (serialized='') and no info_hash, so priorities
+  // 1, 4, 5 are skipped. metadata_uri will be set to a magnet link via a
+  // direct SQL UPDATE after insert to exercise priority 3.
+  auto dr = std::make_shared<DownloadResult>();
+  dr->gid = GroupId::create();
+  dr->result = error_code::FINISHED;
+  dr->option = option_;
+  dr->fileEntries.push_back(
+      std::make_shared<FileEntry>("/tmp/requeue_src.bin", 0, 0));
+  dr->totalLength = 0;
+  dr->completedLength = 0;
+  dr->numPieces = static_cast<size_t>(1);
+  dr->pieceLength = 1024;
+
+  repo->insert(dr);
+  a2_gid_t historicalGid = dr->gid->getNumericId();
+  dr.reset();
+
+  // Patch metadata_uri to a magnet link directly in the DB.
+  {
+    sqlite3* db = e_->getSqlite3Store()->raw();
+    std::string gidHex = GroupId::toHex(historicalGid);
+    sqlite3_stmt* updStmt = nullptr;
+    const char* updSql =
+        "UPDATE download_history SET metadata_uri = ? WHERE gid = ?";
+    CPPUNIT_ASSERT_EQUAL(
+        SQLITE_OK,
+        sqlite3_prepare_v2(db, updSql, -1, &updStmt, nullptr));
+    std::string magnet =
+        "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567";
+    sqlite3_bind_text(updStmt, 1, magnet.data(),
+                      static_cast<int>(magnet.size()), SQLITE_STATIC);
+    sqlite3_bind_text(updStmt, 2, gidHex.data(),
+                      static_cast<int>(gidHex.size()), SQLITE_STATIC);
+    CPPUNIT_ASSERT_EQUAL(SQLITE_DONE, sqlite3_step(updStmt));
+    sqlite3_finalize(updStmt);
+  }
+
+  RequeueDownloadResultRpcMethod m;
+  auto req = createReq(RequeueDownloadResultRpcMethod::getMethodName());
+  req.params->append(GroupId::toHex(historicalGid));
+  auto res = m.execute(std::move(req), e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+
+  const Dict* respDict = downcast<Dict>(res.param.get());
+  CPPUNIT_ASSERT(respDict != nullptr);
+  CPPUNIT_ASSERT_EQUAL(std::string("source-uri"),
+                       getString(respDict, "strategy"));
+  CPPUNIT_ASSERT(getString(respDict, "gid") !=
+                 GroupId::toHex(historicalGid));
+
+  CPPUNIT_ASSERT_EQUAL(
+      static_cast<size_t>(1),
+      e_->getRequestGroupMan()->getReservedGroups().size());
+
+  e_->getRequestGroupMan()->setRepository(nullptr);
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
 }
 #endif // HAVE_SQLITE3
 
