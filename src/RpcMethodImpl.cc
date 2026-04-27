@@ -1948,7 +1948,23 @@ std::unique_ptr<ValueBase>
 SystemListMethodsRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
 {
   auto list = List::g();
+#ifdef HAVE_SQLITE3
+  const bool sqliteEnabled =
+      e->getOption()->getAsBool(PREF_ENABLE_SQLITE3_PERSISTENCE);
+#else
+  const bool sqliteEnabled = false;
+#endif
   for (auto& s : allMethodNames()) {
+    if (!sqliteEnabled) {
+      // Spec §8.9: SQLite-only methods are not advertised when the
+      // runtime flag is off, even if the build supports SQLite3.
+      if (s == "aria2.getDownloadResultCount" ||
+          s == "aria2.searchDownloadResult" ||
+          s == "aria2.exportSession" ||
+          s == "aria2.requeueDownloadResult") {
+        continue;
+      }
+    }
     list->append(s);
   }
 

@@ -1,6 +1,7 @@
 #include "RpcMethod.h"
 
 #include <cppunit/extensions/HelperMacros.h>
+#include <set>
 
 #include "DownloadEngine.h"
 #include "SelectEventPoll.h"
@@ -95,6 +96,7 @@ class RpcMethodTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testSystemListMethods);
   CPPUNIT_TEST(testSystemListNotifications);
 #ifdef HAVE_SQLITE3
+  CPPUNIT_TEST(testSystemListMethodsExcludesSqlite3WhenDisabled);
   CPPUNIT_TEST(testSaveSessionRpcWritesBothBackends);
   CPPUNIT_TEST(testChangeOptionPersistsToDb);
   CPPUNIT_TEST(testChangePositionPersistsOrder);
@@ -178,6 +180,7 @@ public:
   void testSystemListMethods();
   void testSystemListNotifications();
 #ifdef HAVE_SQLITE3
+  void testSystemListMethodsExcludesSqlite3WhenDisabled();
   void testSaveSessionRpcWritesBothBackends();
   void testChangeOptionPersistsToDb();
   void testChangePositionPersistsOrder();
@@ -1456,6 +1459,11 @@ void RpcMethodTest::testSystemMulticall_fail()
 
 void RpcMethodTest::testSystemListMethods()
 {
+#ifdef HAVE_SQLITE3
+  // Enable SQLite3 persistence so that all 40 methods (including the 4
+  // SQLite-only ones) are advertised.
+  e_->getOption()->put(PREF_ENABLE_SQLITE3_PERSISTENCE, A2_V_TRUE);
+#endif
   SystemListMethodsRpcMethod m;
   auto res = m.execute(createReq("system.listMethods"), e_.get());
   CPPUNIT_ASSERT_EQUAL(0, res.code);
@@ -1489,6 +1497,52 @@ void RpcMethodTest::testSystemListNotifications()
     CPPUNIT_ASSERT_EQUAL(allNames[i], s->s());
   }
 }
+
+#ifdef HAVE_SQLITE3
+void RpcMethodTest::testSystemListMethodsExcludesSqlite3WhenDisabled()
+{
+  // Default: --enable-sqlite3-persistence=false (option_->put never sets it).
+  // Verify the 4 SQLite-only method names are absent.
+  e_->getOption()->put(PREF_ENABLE_SQLITE3_PERSISTENCE, A2_V_FALSE);
+  SystemListMethodsRpcMethod m;
+  auto res = m.execute(createReq(SystemListMethodsRpcMethod::getMethodName()),
+                       e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+
+  const List* list = downcast<List>(res.param.get());
+  CPPUNIT_ASSERT(list != nullptr);
+
+  std::set<std::string> names;
+  for (auto& v : *list) {
+    if (auto* s = downcast<String>(v)) {
+      names.insert(s->s());
+    }
+  }
+
+  CPPUNIT_ASSERT(names.find("aria2.getDownloadResultCount") == names.end());
+  CPPUNIT_ASSERT(names.find("aria2.searchDownloadResult") == names.end());
+  CPPUNIT_ASSERT(names.find("aria2.exportSession") == names.end());
+  CPPUNIT_ASSERT(names.find("aria2.requeueDownloadResult") == names.end());
+
+  // Now flip the flag and verify the 4 method names appear.
+  e_->getOption()->put(PREF_ENABLE_SQLITE3_PERSISTENCE, A2_V_TRUE);
+  res = m.execute(createReq(SystemListMethodsRpcMethod::getMethodName()),
+                  e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+  list = downcast<List>(res.param.get());
+  CPPUNIT_ASSERT(list != nullptr);
+  names.clear();
+  for (auto& v : *list) {
+    if (auto* s = downcast<String>(v)) {
+      names.insert(s->s());
+    }
+  }
+  CPPUNIT_ASSERT(names.find("aria2.getDownloadResultCount") != names.end());
+  CPPUNIT_ASSERT(names.find("aria2.searchDownloadResult") != names.end());
+  CPPUNIT_ASSERT(names.find("aria2.exportSession") != names.end());
+  CPPUNIT_ASSERT(names.find("aria2.requeueDownloadResult") != names.end());
+}
+#endif // HAVE_SQLITE3
 
 #ifdef HAVE_SQLITE3
 void RpcMethodTest::testSaveSessionRpcWritesBothBackends()
