@@ -492,6 +492,20 @@ public:
   static const char* getMethodName() { return "aria2.getGlobalStat"; }
 };
 
+#ifdef HAVE_SQLITE3
+class GetDownloadResultCountRpcMethod : public RpcMethod {
+protected:
+  std::unique_ptr<ValueBase> process(const RpcRequest& req,
+                                     DownloadEngine* e) override;
+
+public:
+  static const char* getMethodName()
+  {
+    return "aria2.getDownloadResultCount";
+  }
+};
+#endif // HAVE_SQLITE3
+
 class ForceShutdownRpcMethod : public RpcMethod {
 protected:
   virtual std::unique_ptr<ValueBase> process(const RpcRequest& req,

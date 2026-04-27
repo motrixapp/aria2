@@ -100,6 +100,7 @@ class RpcMethodTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testChangePositionPersistsOrder);
   CPPUNIT_TEST(testAddUriPersistsTaskRow);
   CPPUNIT_TEST(testTellStoppedReadsBeyondMemoryCache);
+  CPPUNIT_TEST(testGetDownloadResultCount);
 #endif // HAVE_SQLITE3
   CPPUNIT_TEST_SUITE_END();
 
@@ -177,6 +178,7 @@ public:
   void testChangePositionPersistsOrder();
   void testAddUriPersistsTaskRow();
   void testTellStoppedReadsBeyondMemoryCache();
+  void testGetDownloadResultCount();
 #endif // HAVE_SQLITE3
 };
 
@@ -1750,6 +1752,53 @@ void RpcMethodTest::testTellStoppedReadsBeyondMemoryCache()
   CPPUNIT_ASSERT_EQUAL(static_cast<size_t>(5), list->size());
 
   // Cleanup.
+  e_->getRequestGroupMan()->setRepository(nullptr);
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+}
+#endif // HAVE_SQLITE3
+
+#ifdef HAVE_SQLITE3
+void RpcMethodTest::testGetDownloadResultCount()
+{
+  std::string dbPath = std::string(A2_TEST_OUT_DIR) + "/get_drc.db";
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+
+  auto store = make_unique<Sqlite3PersistenceStore>(dbPath);
+  store->open();
+  e_->setSqlite3Store(std::move(store));
+
+  auto repo = make_unique<Sqlite3DownloadResultRepository>(
+      e_->getSqlite3Store());
+  e_->getRequestGroupMan()->setRepository(repo.get());
+
+  // Insert 3 history rows directly via repo->insert.
+  for (int i = 0; i < 3; ++i) {
+    auto dr = std::make_shared<DownloadResult>();
+    dr->gid = GroupId::create();
+    dr->result = error_code::FINISHED;
+    dr->option = option_;
+    dr->fileEntries.push_back(std::make_shared<FileEntry>(
+        std::string("/tmp/grc") + util::itos(i), 1024, 0));
+    dr->totalLength = 1024;
+    dr->completedLength = 1024;
+    dr->numPieces = static_cast<size_t>(1);
+    dr->pieceLength = 1024;
+    repo->insert(dr);
+  }
+
+  GetDownloadResultCountRpcMethod m;
+  auto req = createReq(GetDownloadResultCountRpcMethod::getMethodName());
+  auto res = m.execute(std::move(req), e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+
+  const Dict* resDict = downcast<Dict>(res.param.get());
+  CPPUNIT_ASSERT(resDict != nullptr);
+  CPPUNIT_ASSERT_EQUAL(std::string("3"), getString(resDict, "count"));
+
   e_->getRequestGroupMan()->setRepository(nullptr);
   std::remove(dbPath.c_str());
   std::remove((dbPath + "-wal").c_str());

@@ -88,6 +88,9 @@ std::vector<std::string> rpcMethodNames = {
     "aria2.forceShutdown",
     "aria2.getGlobalStat",
     "aria2.saveSession",
+#ifdef HAVE_SQLITE3
+    "aria2.getDownloadResultCount",
+#endif // HAVE_SQLITE3
     "system.multicall",
     "system.listMethods",
     "system.listNotifications",
@@ -250,6 +253,12 @@ std::unique_ptr<RpcMethod> createMethod(const std::string& methodName)
   if (methodName == SaveSessionRpcMethod::getMethodName()) {
     return make_unique<SaveSessionRpcMethod>();
   }
+
+#ifdef HAVE_SQLITE3
+  if (methodName == GetDownloadResultCountRpcMethod::getMethodName()) {
+    return make_unique<GetDownloadResultCountRpcMethod>();
+  }
+#endif // HAVE_SQLITE3
 
   if (methodName == SystemMulticallRpcMethod::getMethodName()) {
     return make_unique<SystemMulticallRpcMethod>();

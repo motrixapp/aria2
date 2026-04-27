@@ -81,6 +81,7 @@
 #include "CheckIntegrityEntry.h"
 #ifdef HAVE_SQLITE3
 #  include "Sqlite3SessionStore.h"
+#  include "Sqlite3DownloadResultRepository.h"
 #endif // HAVE_SQLITE3
 
 namespace aria2 {
@@ -1544,6 +1545,35 @@ std::unique_ptr<ValueBase> SaveSessionRpcMethod::process(const RpcRequest& req,
   }
   return createOKResponse();
 }
+
+#ifdef HAVE_SQLITE3
+std::unique_ptr<ValueBase>
+GetDownloadResultCountRpcMethod::process(const RpcRequest& req,
+                                         DownloadEngine* e)
+{
+  auto* repo = e->getRequestGroupMan()->getRepository();
+  if (!repo) {
+    throw DL_ABORT_EX("SQLite3 persistence is not enabled");
+  }
+  const Dict* filterParam = checkParam<Dict>(req, 0);
+  SearchFilter f;
+  if (filterParam) {
+    if (auto* s = downcast<String>(filterParam->get("status"))) {
+      f.statuses.push_back(s->s());
+    }
+    if (auto* since = downcast<Integer>(filterParam->get("since"))) {
+      f.since = since->i();
+    }
+    if (auto* until = downcast<Integer>(filterParam->get("until"))) {
+      f.until = until->i();
+    }
+  }
+  int64_t count = repo->countWithFilter(f);
+  auto r = Dict::g();
+  r->put("count", String::g(util::itos(count)));
+  return std::move(r);
+}
+#endif // HAVE_SQLITE3
 
 std::unique_ptr<ValueBase>
 SystemMulticallRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
