@@ -168,7 +168,16 @@ std::shared_ptr<DownloadResult> rowToDr(sqlite3_stmt* stmt)
   if (gidTxt && gidTxt[0]) {
     a2_gid_t gidNum = 0;
     if (GroupId::toNumericId(gidNum, gidTxt) == 0) {
+      // Try import() first (registers in set_) for the cold-start path
+      // where no live RG holds this gid. If import() returns null because
+      // a live mem DR / RG already owns the slot, fall back to a transient
+      // shared_ptr that doesn't compete for the slot — letting the same
+      // numeric id be stringified for an RPC response without disturbing
+      // the live owner.
       dr->gid = GroupId::import(gidNum);
+      if (!dr->gid) {
+        dr->gid = GroupId::importTransient(gidNum);
+      }
     }
   }
 

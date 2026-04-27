@@ -51,7 +51,7 @@ std::shared_ptr<GroupId> GroupId::create()
       break;
     }
   }
-  std::shared_ptr<GroupId> res(new GroupId(n));
+  std::shared_ptr<GroupId> res(new GroupId(n, /*registerInSet=*/true));
   return res;
 }
 
@@ -61,8 +61,20 @@ std::shared_ptr<GroupId> GroupId::import(a2_gid_t n)
   if (n == 0 || set_.count(n) != 0) {
     return res;
   }
-  res.reset(new GroupId(n));
+  res.reset(new GroupId(n, /*registerInSet=*/true));
   return res;
+}
+
+std::shared_ptr<GroupId> GroupId::importTransient(a2_gid_t n)
+{
+  if (n == 0) {
+    return nullptr;
+  }
+  // Skip uniqueness check; allow duplicate with an already-live GroupId.
+  // The transient instance does NOT touch set_ on construction OR
+  // destruction, so the live instance retains exclusive ownership of
+  // the slot.
+  return std::shared_ptr<GroupId>(new GroupId(n, /*registerInSet=*/false));
 }
 
 void GroupId::clear() { set_.clear(); }
@@ -140,8 +152,19 @@ std::string GroupId::toHex() const { return toHex(gid_); }
 
 std::string GroupId::toAbbrevHex() const { return toAbbrevHex(gid_); }
 
-GroupId::GroupId(a2_gid_t gid) : gid_(gid) { set_.insert(gid_); }
+GroupId::GroupId(a2_gid_t gid, bool registerInSet)
+    : gid_(gid), registered_(registerInSet)
+{
+  if (registered_) {
+    set_.insert(gid_);
+  }
+}
 
-GroupId::~GroupId() { set_.erase(gid_); }
+GroupId::~GroupId()
+{
+  if (registered_) {
+    set_.erase(gid_);
+  }
+}
 
 } // namespace aria2

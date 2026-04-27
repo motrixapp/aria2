@@ -49,6 +49,14 @@ class GroupId {
 public:
   static std::shared_ptr<GroupId> create();
   static std::shared_ptr<GroupId> import(a2_gid_t n);
+
+  // Constructs a GroupId for the given numeric id WITHOUT registering it
+  // in the uniqueness set. Use only for transient, read-only holders that
+  // mirror an already-registered live GroupId (e.g., DownloadResult rows
+  // reconstructed from the SQLite history during an RPC response).
+  // Returns nullptr only when n == 0.
+  static std::shared_ptr<GroupId> importTransient(a2_gid_t n);
+
   static void clear();
   enum { ERR_NOT_UNIQUE = -1, ERR_NOT_FOUND = -2, ERR_INVALID = -3 };
   static int expandUnique(a2_gid_t& n, const char* hex);
@@ -64,9 +72,10 @@ public:
 private:
   static std::set<a2_gid_t> set_;
 
-  GroupId(a2_gid_t gid);
+  GroupId(a2_gid_t gid, bool registerInSet);
 
   a2_gid_t gid_;
+  bool registered_;
 };
 
 } // namespace aria2

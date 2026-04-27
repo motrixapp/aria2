@@ -102,6 +102,7 @@ class RpcMethodTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testChangePositionPersistsOrder);
   CPPUNIT_TEST(testAddUriPersistsTaskRow);
   CPPUNIT_TEST(testTellStoppedReadsBeyondMemoryCache);
+  CPPUNIT_TEST(testTellStoppedAfterCascadedAddDownloadResult);
   CPPUNIT_TEST(testGetDownloadResultCount);
   CPPUNIT_TEST(testSearchByPathLikeAndStatus);
   CPPUNIT_TEST(testExportSessionWritesSerializerOutput);
@@ -186,6 +187,7 @@ public:
   void testChangePositionPersistsOrder();
   void testAddUriPersistsTaskRow();
   void testTellStoppedReadsBeyondMemoryCache();
+  void testTellStoppedAfterCascadedAddDownloadResult();
   void testGetDownloadResultCount();
   void testSearchByPathLikeAndStatus();
   void testExportSessionWritesSerializerOutput();
@@ -1816,6 +1818,76 @@ void RpcMethodTest::testTellStoppedReadsBeyondMemoryCache()
   CPPUNIT_ASSERT_EQUAL(static_cast<size_t>(5), list->size());
 
   // Cleanup.
+  e_->getRequestGroupMan()->setRepository(nullptr);
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+}
+#endif // HAVE_SQLITE3
+
+#ifdef HAVE_SQLITE3
+void RpcMethodTest::testTellStoppedAfterCascadedAddDownloadResult()
+{
+  std::string dbPath =
+      std::string(A2_TEST_OUT_DIR) + "/tell_stopped_cascade.db";
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+
+  auto store = make_unique<Sqlite3PersistenceStore>(dbPath);
+  store->open();
+  e_->setSqlite3Store(std::move(store));
+  auto repo = make_unique<Sqlite3DownloadResultRepository>(
+      e_->getSqlite3Store());
+  e_->getRequestGroupMan()->setRepository(repo.get());
+
+  // Build a real DownloadResult and call addDownloadResult to trigger the
+  // Phase C cascade (push to mem AND insert to DB). This replicates the
+  // live scenario where mem holds the GroupId slot while the DB has the
+  // matching row.
+  auto dr = std::make_shared<DownloadResult>();
+  dr->gid = GroupId::create();
+  dr->result = error_code::FINISHED;
+  dr->option = option_;
+  dr->fileEntries.push_back(std::make_shared<FileEntry>(
+      "/tmp/tellstopped_cascade.bin", 1024, 0));
+  dr->totalLength = 1024;
+  dr->completedLength = 1024;
+  dr->numPieces = 1;
+  dr->pieceLength = 1024;
+  e_->getRequestGroupMan()->addDownloadResult(dr);
+  // dr stays alive: mem holds it via downloadResults_ AND we hold a
+  // shared_ptr in this scope. The slot is owned.
+
+  TellStoppedRpcMethod m;
+  auto req = createReq(TellStoppedRpcMethod::getMethodName());
+  req.params->append(Integer::g(0));
+  req.params->append(Integer::g(10));
+  auto res = m.execute(std::move(req), e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+
+  const List* list = downcast<List>(res.param.get());
+  CPPUNIT_ASSERT(list != nullptr);
+  // At least one entry expected (the cascaded DR). Both mem and DB-
+  // reconstructed (transient gid) paths must serialize without crashing.
+  CPPUNIT_ASSERT(list->size() >= 1);
+
+  // Verify the entry has a non-null gid that matches the historical hex
+  // when stringified.
+  std::string expectedHex = GroupId::toHex(dr->gid->getNumericId());
+  bool foundDbEntry = false;
+  for (auto& v : *list) {
+    if (auto* d = downcast<Dict>(v)) {
+      if (auto* g = downcast<String>(d->get("gid"))) {
+        if (g->s() == expectedHex) {
+          foundDbEntry = true;
+          break;
+        }
+      }
+    }
+  }
+  CPPUNIT_ASSERT(foundDbEntry);
+
   e_->getRequestGroupMan()->setRepository(nullptr);
   std::remove(dbPath.c_str());
   std::remove((dbPath + "-wal").c_str());
