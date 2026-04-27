@@ -1548,6 +1548,87 @@ std::unique_ptr<ValueBase> SaveSessionRpcMethod::process(const RpcRequest& req,
 
 #ifdef HAVE_SQLITE3
 std::unique_ptr<ValueBase>
+SearchDownloadResultRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
+{
+  const Dict* queryParam = checkRequiredParam<Dict>(req, 0);
+  const Integer* offsetParam = checkRequiredInteger(req, 1, IntegerGE(0));
+  const Integer* numParam = checkRequiredInteger(req, 2, IntegerGE(0));
+  const List* keysParam = checkParam<List>(req, 3);
+
+  SearchFilter f;
+
+  // status: string | string[]
+  const ValueBase* statusVal = queryParam->get("status");
+  if (auto* s = downcast<String>(statusVal)) {
+    f.statuses.push_back(s->s());
+  }
+  else if (auto* l = downcast<List>(statusVal)) {
+    for (auto& elem : *l) {
+      if (auto* s2 = downcast<String>(elem)) {
+        f.statuses.push_back(s2->s());
+      }
+    }
+  }
+
+  if (auto* p = downcast<Integer>(queryParam->get("since")))
+    f.since = p->i();
+  if (auto* p = downcast<Integer>(queryParam->get("until")))
+    f.until = p->i();
+  if (auto* p = downcast<String>(queryParam->get("infoHash")))
+    f.infoHashHex = p->s();
+  if (auto* p = downcast<String>(queryParam->get("gidPrefix")))
+    f.gidPrefix = p->s();
+  if (auto* p = downcast<Integer>(queryParam->get("minSize")))
+    f.minSize = p->i();
+  if (auto* p = downcast<Integer>(queryParam->get("maxSize")))
+    f.maxSize = p->i();
+  if (auto* p = downcast<String>(queryParam->get("pathLike")))
+    f.pathLike = p->s();
+
+  int64_t offset = offsetParam->i();
+  int64_t num = numParam->i();
+  if (offset > INT_MAX)
+    offset = INT_MAX;
+  if (num > INT_MAX)
+    num = INT_MAX;
+
+  std::vector<std::string> keys;
+  toStringList(std::back_inserter(keys), keysParam);
+
+  auto* repo = e->getRequestGroupMan()->getRepository();
+  if (!repo) {
+    throw DL_ABORT_EX("SQLite3 persistence is not enabled");
+  }
+
+  auto results =
+      repo->search(f, static_cast<int>(offset), static_cast<int>(num));
+
+  auto list = List::g();
+  for (auto& dr : results) {
+    auto entryDict = Dict::g();
+    gatherStoppedDownload(entryDict.get(), dr, keys);
+    list->append(std::move(entryDict));
+  }
+  return std::move(list);
+}
+
+std::unique_ptr<ValueBase>
+ExportSessionRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
+{
+  const String* pathParam = checkRequiredParam<String>(req, 0);
+  const std::string& path = pathParam->s();
+  if (path.empty()) {
+    throw DL_ABORT_EX("Invalid path");
+  }
+  SessionSerializer ser(e->getRequestGroupMan().get());
+  if (!ser.save(path)) {
+    throw DL_ABORT_EX(
+        fmt("Failed to write session export to '%s'", path.c_str()));
+  }
+  return createOKResponse();
+}
+
+std::unique_ptr<ValueBase>
 GetDownloadResultCountRpcMethod::process(const RpcRequest& req,
                                          DownloadEngine* e)
 {

@@ -101,6 +101,8 @@ class RpcMethodTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testAddUriPersistsTaskRow);
   CPPUNIT_TEST(testTellStoppedReadsBeyondMemoryCache);
   CPPUNIT_TEST(testGetDownloadResultCount);
+  CPPUNIT_TEST(testSearchByPathLikeAndStatus);
+  CPPUNIT_TEST(testExportSessionWritesSerializerOutput);
 #endif // HAVE_SQLITE3
   CPPUNIT_TEST_SUITE_END();
 
@@ -179,6 +181,8 @@ public:
   void testAddUriPersistsTaskRow();
   void testTellStoppedReadsBeyondMemoryCache();
   void testGetDownloadResultCount();
+  void testSearchByPathLikeAndStatus();
+  void testExportSessionWritesSerializerOutput();
 #endif // HAVE_SQLITE3
 };
 
@@ -1803,6 +1807,88 @@ void RpcMethodTest::testGetDownloadResultCount()
   std::remove(dbPath.c_str());
   std::remove((dbPath + "-wal").c_str());
   std::remove((dbPath + "-shm").c_str());
+}
+#endif // HAVE_SQLITE3
+
+#ifdef HAVE_SQLITE3
+void RpcMethodTest::testSearchByPathLikeAndStatus()
+{
+  std::string dbPath = std::string(A2_TEST_OUT_DIR) + "/search_dr.db";
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+
+  auto store = make_unique<Sqlite3PersistenceStore>(dbPath);
+  store->open();
+  e_->setSqlite3Store(std::move(store));
+  auto repo = make_unique<Sqlite3DownloadResultRepository>(
+      e_->getSqlite3Store());
+  e_->getRequestGroupMan()->setRepository(repo.get());
+
+  auto makeDr = [&](error_code::Value status, const std::string& filePath) {
+    auto dr = std::make_shared<DownloadResult>();
+    dr->gid = GroupId::create();
+    dr->result = status;
+    dr->option = option_;
+    dr->fileEntries.push_back(std::make_shared<FileEntry>(filePath, 1024, 0));
+    dr->totalLength = 1024;
+    dr->completedLength = 1024;
+    dr->numPieces = static_cast<size_t>(1);
+    dr->pieceLength = 1024;
+    return dr;
+  };
+
+  // 3 entries: 2 with /foo/bar.iso, 1 with /foo/baz.iso.
+  // Status: complete, complete, error.
+  repo->insert(makeDr(error_code::FINISHED, "/foo/bar.iso"));      // complete
+  repo->insert(makeDr(error_code::FINISHED, "/foo/baz.iso"));      // complete
+  repo->insert(makeDr(error_code::UNKNOWN_ERROR, "/foo/bar.iso")); // error
+
+  SearchDownloadResultRpcMethod m;
+  auto req = createReq(SearchDownloadResultRpcMethod::getMethodName());
+  auto query = Dict::g();
+  query->put("status", "complete");
+  query->put("pathLike", "%bar%");
+  req.params->append(std::move(query));
+  req.params->append(Integer::g(0));
+  req.params->append(Integer::g(10));
+  auto res = m.execute(std::move(req), e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+
+  const List* list = downcast<List>(res.param.get());
+  CPPUNIT_ASSERT(list != nullptr);
+  CPPUNIT_ASSERT_EQUAL(static_cast<size_t>(1), list->size());
+
+  e_->getRequestGroupMan()->setRepository(nullptr);
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+}
+#endif // HAVE_SQLITE3
+
+#ifdef HAVE_SQLITE3
+void RpcMethodTest::testExportSessionWritesSerializerOutput()
+{
+  std::string outPath =
+      std::string(A2_TEST_OUT_DIR) + "/export_session_test.txt";
+  std::remove(outPath.c_str());
+
+  // Add 1 reserved RG so there's something to export.
+  auto dctx = std::make_shared<DownloadContext>(0, 0, "");
+  dctx->getFirstFileEntry()->addUri("http://example.com/exported");
+  auto rg = std::make_shared<RequestGroup>(GroupId::create(), option_);
+  rg->setDownloadContext(dctx);
+  e_->getRequestGroupMan()->addReservedGroup(rg);
+
+  ExportSessionRpcMethod m;
+  auto req = createReq(ExportSessionRpcMethod::getMethodName());
+  req.params->append(outPath);
+  auto res = m.execute(std::move(req), e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+
+  CPPUNIT_ASSERT(File(outPath).exists());
+
+  std::remove(outPath.c_str());
 }
 #endif // HAVE_SQLITE3
 

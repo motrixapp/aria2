@@ -504,6 +504,27 @@ public:
     return "aria2.getDownloadResultCount";
   }
 };
+
+class SearchDownloadResultRpcMethod : public RpcMethod {
+protected:
+  std::unique_ptr<ValueBase> process(const RpcRequest& req,
+                                     DownloadEngine* e) override;
+
+public:
+  static const char* getMethodName()
+  {
+    return "aria2.searchDownloadResult";
+  }
+};
+
+class ExportSessionRpcMethod : public RpcMethod {
+protected:
+  std::unique_ptr<ValueBase> process(const RpcRequest& req,
+                                     DownloadEngine* e) override;
+
+public:
+  static const char* getMethodName() { return "aria2.exportSession"; }
+};
 #endif // HAVE_SQLITE3
 
 class ForceShutdownRpcMethod : public RpcMethod {
