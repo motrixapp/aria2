@@ -75,6 +75,7 @@ Here is a list of features:
 * Parameterized URI support
 * IPv6 support with Happy Eyeballs
 * Disk cache to reduce disk activity
+* SQLite3 session and progress persistence via --enable-sqlite3-persistence
 
 
 Versioning and release schedule
