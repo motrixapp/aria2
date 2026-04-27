@@ -114,7 +114,8 @@ aria2c_SOURCES += Sqlite3CookieParserTest.cc\
 	Sqlite3MigrationsTest.cc\
 	Sqlite3BtProgressInfoFileTest.cc\
 	Sqlite3SessionStoreTest.cc\
-	Sqlite3DownloadResultRepositoryTest.cc
+	Sqlite3DownloadResultRepositoryTest.cc\
+	Sqlite3SymmetryIntegrationTest.cc
 endif # HAVE_SQLITE3
 
 aria2c_SOURCES += MessageDigestHelperTest.cc\
