@@ -270,7 +270,7 @@ fi
 
 have_sqlite3=no
 if test "x$with_sqlite3" = "xyes"; then
-  PKG_CHECK_MODULES([SQLITE3],[sqlite3],[have_sqlite3=yes],[have_sqlite3=no])
+  PKG_CHECK_MODULES([SQLITE3],[sqlite3 >= 3.24.0],[have_sqlite3=yes],[have_sqlite3=no])
   if test "x$have_sqlite3" = "xyes"; then
     AC_DEFINE([HAVE_SQLITE3], [1], [Define to 1 if you have sqlite3.])
     save_LIBS=$LIBS
