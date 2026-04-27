@@ -902,32 +902,30 @@ void Sqlite3SymmetryIntegrationTest::testPurgeDownloadResultPersists()
   addActive("http://example.com/purge2.bin");
   addActive("http://example.com/purge3.bin");
 
-  // Wait for at least one to appear in tellStopped.
-  bool anyFailed = false;
-  for (int i = 0; i < 50; ++i) {
-    ::usleep(200000); // 200 ms
-    std::string stopped = rpc("aria2.tellStopped",
-                              "[\"token:integrationtestsecret\",0,10]");
-    if (stopped.find("\"gid\"") != std::string::npos) {
-      anyFailed = true;
+  // Wait for ALL 3 to appear in tellStopped before purging. Otherwise a
+  // download still in flight may fail after purge and re-populate
+  // download_history before our post-kill DB check, causing a flaky failure.
+  int64_t before = 0;
+  for (int i = 0; i < 100; ++i) {
+    ::usleep(200000); // 200 ms; total budget ~20 s
+    before = dbCount("SELECT COUNT(*) FROM download_history");
+    if (before >= 3) {
       break;
     }
   }
-  CPPUNIT_ASSERT_MESSAGE("at least one download should appear in tellStopped",
-                          anyFailed);
+  CPPUNIT_ASSERT_MESSAGE("all 3 downloads should be in download_history "
+                         "before purge: got " + std::to_string(before),
+                          before >= 3);
 
-  // Check DB has history rows.
-  int64_t before = dbCount("SELECT COUNT(*) FROM download_history");
-  CPPUNIT_ASSERT_MESSAGE("download_history should have >= 1 row before purge",
-                          before >= 1);
-
-  // purgeDownloadResult.
+  // purgeDownloadResult is a synchronous DELETE; the RPC returns after the
+  // row(s) are gone. No additional sleep is needed and is harmful — any
+  // in-flight downloads still failing in that window would re-populate the
+  // table.
   std::string resp = rpc("aria2.purgeDownloadResult",
                           "[\"token:integrationtestsecret\"]");
   CPPUNIT_ASSERT_MESSAGE("purgeDownloadResult should return OK: " + resp,
                           resp.find("\"result\":\"OK\"") != std::string::npos);
 
-  ::usleep(100000);
   sigkill();
 
   // All history should be gone.
