@@ -45,7 +45,7 @@ main.log
 main.trs
 test-suite.log
 .DS_Store
-build-release
+build-*/
 docs/
 build/
 
