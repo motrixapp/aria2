@@ -133,7 +133,8 @@ void Sqlite3SessionStore::saveAllTasks(RequestGroupMan* rgman)
   // Collect gids of all RGs that should remain in the table after this save.
   std::vector<a2_gid_t> liveGids;
   liveGids.reserve(rgman->getRequestGroups().size() +
-                   rgman->getReservedGroups().size());
+                   rgman->getReservedGroups().size() +
+                   rgman->getDownloadResults().size());
 
   // Step 1: UPSERT each active + reserved RG. upsertTask preserves
   // created_at and queue_position on conflict (Task 17), and the INSERT path
@@ -148,10 +149,31 @@ void Sqlite3SessionStore::saveAllTasks(RequestGroupMan* rgman)
     liveGids.push_back(rg->getGID());
   }
 
+  // Step 1.5: count `downloadResults_` (and unfinishedDownloadResults_) as
+  // live too. At shutdown, `onEndOfRun → removeStoppedGroup` moves
+  // currently-active RGs into `downloadResults_`. The transition site at
+  // RequestGroupMan.cc:466 already handles per-task deletion when
+  // `--force-save=false` via deleteTask(). With `--force-save=true` the
+  // user wants those rows preserved across restart, but they're no longer
+  // in active/reserved — so the orphan-removal pass below would
+  // incorrectly delete them. Including them in liveGids keeps the
+  // periodic-save semantics (orphan rows still get cleaned up) while
+  // preventing the shutdown race from wiping in-flight tasks.
+  for (const auto& dr : rgman->getDownloadResults()) {
+    if (dr && dr->gid) {
+      liveGids.push_back(dr->gid->getNumericId());
+    }
+  }
+  for (const auto& dr : rgman->getUnfinishedDownloadResult()) {
+    if (dr && dr->gid) {
+      liveGids.push_back(dr->gid->getNumericId());
+    }
+  }
+
   // Step 2: orphan removal. Any task row whose gid is no longer in the
-  // active+reserved set represents a completed/removed task; CASCADE on
-  // its task_progress is correct (the task is gone, its progress should
-  // be gone too).
+  // active+reserved+stopped set represents a row that was never paired
+  // with a RG / DownloadResult in this session — CASCADE on its
+  // task_progress is then correct.
   removeOrphanTasks(liveGids);
 }
 

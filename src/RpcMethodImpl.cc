@@ -320,7 +320,29 @@ std::unique_ptr<ValueBase> AddTorrentRpcMethod::process(const RpcRequest& req,
 
   std::string filename;
   if (requestOption->getAsBool(PREF_RPC_SAVE_UPLOAD_METADATA)) {
-    filename = util::applyDir(requestOption->get(PREF_DIR),
+    const std::string& dirPath = requestOption->get(PREF_DIR);
+    // Ensure the target dir exists before util::saveAs tries to fopen a
+    // file inside it. Front-ends (e.g. Motrix Turbo's `.motrix` in-flight
+    // container) may pass a freshly-named dir that aria2 would otherwise
+    // only auto-create later in BtFileAllocationEntry. If saveAs fails,
+    // metaInfoUri stays empty, the task gets a data-only MetadataInfo,
+    // SessionSerializer skips it, the sqlite3-persistence `task` row is
+    // never written, and the next pause hits a FOREIGN KEY violation
+    // when Sqlite3BtProgressInfoFile::save tries to UPSERT task_progress.
+    if (!dirPath.empty()) {
+      try {
+        util::mkdirs(dirPath);
+      }
+      catch (RecoverableException& ex) {
+        A2_LOG_WARN_EX(
+            fmt("Failed to mkdirs(%s) before saving uploaded torrent data."
+                " Continuing — saveAs may still succeed if the directory"
+                " is created concurrently.",
+                dirPath.c_str()),
+            ex);
+      }
+    }
+    filename = util::applyDir(dirPath,
                               getHexSha1(torrentParam->s()) + ".torrent");
     // Save uploaded data in order to save this download in
     // --save-session file.
@@ -385,7 +407,22 @@ std::unique_ptr<ValueBase> AddMetalinkRpcMethod::process(const RpcRequest& req,
     // Version 3 uses .metalink extension. We use .meta4 for both
     // RFC5854 Metalink and Version 3. aria2 can detect which of which
     // by reading content rather than extension.
-    filename = util::applyDir(requestOption->get(PREF_DIR),
+    const std::string& dirPath = requestOption->get(PREF_DIR);
+    if (!dirPath.empty()) {
+      try {
+        // Same rationale as AddTorrentRpcMethod above: ensure the dir
+        // exists so saveAs can succeed even on a freshly-created path.
+        util::mkdirs(dirPath);
+      }
+      catch (RecoverableException& ex) {
+        A2_LOG_WARN_EX(
+            fmt("Failed to mkdirs(%s) before saving uploaded metalink data."
+                " Continuing — saveAs may still succeed.",
+                dirPath.c_str()),
+            ex);
+      }
+    }
+    filename = util::applyDir(dirPath,
                               getHexSha1(metalinkParam->s()) + ".meta4");
     // Save uploaded data in order to save this download in
     // --save-session file.
