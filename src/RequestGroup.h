@@ -349,6 +349,8 @@ public:
 
   bool isForceHaltRequested() const { return forceHaltRequested_; }
 
+  HaltReason getHaltReason() const { return haltReason_; }
+
   void setPauseRequested(bool f);
 
   bool isPauseRequested() const { return pauseRequested_; }

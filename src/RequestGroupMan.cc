@@ -238,7 +238,25 @@ size_t RequestGroupMan::changeReservedGroupPosition(a2_gid_t gid, int pos,
 
 bool RequestGroupMan::removeReservedGroup(a2_gid_t gid)
 {
-  return reservedGroups_.remove(gid);
+  bool memSuccess = reservedGroups_.remove(gid);
+#ifdef HAVE_SQLITE3
+  // The reserved RG was upserted into the `task` table by the previous
+  // saveAllTasks pass. Removing it from memory here without also
+  // deleting the persisted row leaves a phantom that aria2 will
+  // resurrect on next restart — visible to motrix-turbo as an Error /
+  // ghost task with no matching sidecar. Clean both atomically.
+  if (sessionStore_) {
+    try {
+      sessionStore_->deleteTask(GroupId::toHex(gid));
+    }
+    catch (RecoverableException& ex) {
+      A2_LOG_ERROR_EX(
+          "sqlite3-persistence: deleteTask in removeReservedGroup failed",
+          ex);
+    }
+  }
+#endif // HAVE_SQLITE3
+  return memSuccess;
 }
 
 namespace {
@@ -463,7 +481,24 @@ public:
 #ifdef HAVE_SQLITE3
         if (auto* ss = e_->getSqlite3SessionStore()) {
           try {
-            if (!group->getOption()->getAsBool(PREF_FORCE_SAVE)) {
+            // Two cases delete the persisted `task` row at this
+            // active→stopped transition:
+            //   • `--force-save=false`: the original semantic — never
+            //     keep stopped rows.
+            //   • `--force-save=true` AND the halt was user-requested
+            //     (RPC remove / forceRemove). The user explicitly asked
+            //     to drop this gid; force-save's "preserve in-flight
+            //     across crashes" intent does NOT extend to that. Without
+            //     this, motrix-turbo's finalizeBt path leaves a phantom
+            //     row whenever its removeDownloadResult call lands
+            //     before the transition has run (the deferred transition
+            //     re-creates / preserves the row that motrix's later
+            //     deleteTask had already removed).
+            const bool forceSave =
+                group->getOption()->getAsBool(PREF_FORCE_SAVE);
+            const bool userRemoved =
+                group->getHaltReason() == RequestGroup::USER_REQUEST;
+            if (!forceSave || userRemoved) {
               ss->deleteTask(GroupId::toHex(group->getGID()));
             }
           }
@@ -938,6 +973,32 @@ bool RequestGroupMan::removeDownloadResult(a2_gid_t gid)
       dbSuccess = false;
     }
   }
+  // removeDownloadResult is the explicit "purge this gid" RPC. With
+  // `--force-save=true` the active→stopped transition site (line 466)
+  // intentionally preserves the `task` row so an in-flight download
+  // can resume after a crash; that semantic does NOT extend to a user-
+  // initiated removal. If we don't delete here, the row outlives the
+  // in-memory result and aria2 will load it as a phantom task on the
+  // next restart (motrix-turbo then sees an extra Error row whose gid
+  // doesn't match any sidecar).
+  //
+  // Also covers the forceRemove → removeDownloadResult race: if the
+  // halt request hadn't transitioned the gid into downloadResults_ yet
+  // when this call arrives, memSuccess and dbSuccess will both be false
+  // here, but the deferred transition (executed on the next event-loop
+  // iteration with force-save=true) will leave a row that no later
+  // call cleans up. Issuing deleteTask unconditionally on the explicit-
+  // remove path closes that window.
+  if (sessionStore_) {
+    try {
+      sessionStore_->deleteTask(GroupId::toHex(gid));
+    }
+    catch (RecoverableException& ex) {
+      A2_LOG_ERROR_EX(
+          "sqlite3-persistence: deleteTask in removeDownloadResult failed",
+          ex);
+    }
+  }
   return memSuccess || dbSuccess;
 #else
   return memSuccess;
@@ -996,6 +1057,28 @@ void RequestGroupMan::addDownloadResult(
 
 void RequestGroupMan::purgeDownloadResult()
 {
+#ifdef HAVE_SQLITE3
+  // Snapshot every gid that's about to be cleared so we can prune the
+  // matching `task` rows. With `--force-save=true` those rows survive
+  // the active→stopped transition; purging only download_history but
+  // leaving `task` behind would let the gids resurrect on restart.
+  std::vector<a2_gid_t> purgedGids;
+  if (sessionStore_) {
+    purgedGids.reserve(downloadResults_.size() +
+                       unfinishedDownloadResults_.size());
+    for (const auto& dr : downloadResults_) {
+      if (dr && dr->gid) {
+        purgedGids.push_back(dr->gid->getNumericId());
+      }
+    }
+    for (const auto& dr : unfinishedDownloadResults_) {
+      if (dr && dr->gid) {
+        purgedGids.push_back(dr->gid->getNumericId());
+      }
+    }
+  }
+#endif // HAVE_SQLITE3
+
   downloadResults_.clear();
 #ifdef HAVE_SQLITE3
   if (repo_) {
@@ -1003,6 +1086,18 @@ void RequestGroupMan::purgeDownloadResult()
       repo_->purgeAll();
     }
     catch (RecoverableException&) {
+    }
+  }
+  if (sessionStore_) {
+    for (auto gid : purgedGids) {
+      try {
+        sessionStore_->deleteTask(GroupId::toHex(gid));
+      }
+      catch (RecoverableException& ex) {
+        A2_LOG_ERROR_EX(
+            "sqlite3-persistence: deleteTask in purgeDownloadResult failed",
+            ex);
+      }
     }
   }
 #endif

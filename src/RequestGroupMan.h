@@ -63,6 +63,7 @@ class WrDiskCache;
 class OpenedFileCounter;
 #ifdef HAVE_SQLITE3
 class Sqlite3DownloadResultRepository;
+class Sqlite3SessionStore;
 #endif // HAVE_SQLITE3
 
 typedef IndexedList<a2_gid_t, std::shared_ptr<RequestGroup>> RequestGroupList;
@@ -137,6 +138,12 @@ private:
   // Non-owning pointer to the download-result repository.  Owned by
   // MultiUrlRequestInfo so its lifetime covers the whole session.
   Sqlite3DownloadResultRepository* repo_ = nullptr;
+  // Non-owning pointer to the session store.  Owned (lazy-cached) by
+  // DownloadEngine.  Used by removeReservedGroup / removeDownloadResult
+  // / purgeDownloadResult to also delete the persisted `task` row;
+  // without this, with `--force-save=true` the row outlives the in-memory
+  // task and resurrects as a phantom on restart.
+  Sqlite3SessionStore* sessionStore_ = nullptr;
 #endif // HAVE_SQLITE3
 
   void formatDownloadResultFull(
@@ -388,6 +395,8 @@ public:
 #ifdef HAVE_SQLITE3
   void setRepository(Sqlite3DownloadResultRepository* r) { repo_ = r; }
   Sqlite3DownloadResultRepository* getRepository() const { return repo_; }
+  void setSessionStore(Sqlite3SessionStore* s) { sessionStore_ = s; }
+  Sqlite3SessionStore* getSessionStore() const { return sessionStore_; }
 #endif // HAVE_SQLITE3
 };
 

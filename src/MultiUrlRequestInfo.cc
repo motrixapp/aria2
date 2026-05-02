@@ -226,6 +226,14 @@ int MultiUrlRequestInfo::prepare()
     if (auto* store = e_->getSqlite3Store()) {
       sqlite3Repo_ = make_unique<Sqlite3DownloadResultRepository>(store);
       e_->getRequestGroupMan()->setRepository(sqlite3Repo_.get());
+      // Also expose Sqlite3SessionStore so RequestGroupMan can delete
+      // the persisted `task` row when removeReservedGroup,
+      // removeDownloadResult, or purgeDownloadResult fire — otherwise
+      // those rows survive the in-memory removal and resurrect as
+      // phantom tasks after restart (visible to motrix-turbo as an
+      // Error / ghost row).
+      e_->getRequestGroupMan()->setSessionStore(
+          e_->getSqlite3SessionStore());
     }
 #endif // HAVE_SQLITE3
 
