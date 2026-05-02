@@ -501,6 +501,31 @@ public:
             if (!forceSave || userRemoved) {
               ss->deleteTask(GroupId::toHex(group->getGID()));
             }
+            else {
+              // Force-save preserves the `task` row across this
+              // transition; we must also flush the FINAL BT progress
+              // (notably `upload_length`) into `task_progress` here.
+              // RequestGroupMan::save() only iterates `requestGroups_`,
+              // and this RG has just left it — so without this call
+              // the persisted upload_length sticks at whatever the
+              // last periodic save captured (typically a few hundred
+              // ms before the SeedCheckCommand decided ratio was met).
+              // After restart aria2 reads that stale value, decides
+              // ratio is NOT yet satisfied, and starts seeding again
+              // — the user-visible "Completed → Seeding → Completed"
+              // restart loop. saveControlFile is a no-op for non-BT
+              // tasks (HTTP/FTP DefaultBtProgressInfoFile::save just
+              // writes the standard .aria2 control file, which the
+              // download-already-finished branch removes on next save).
+              try {
+                group->saveControlFile();
+              }
+              catch (RecoverableException& ex) {
+                A2_LOG_ERROR_EX(
+                    "sqlite3-persistence: final saveControlFile failed",
+                    ex);
+              }
+            }
           }
           catch (RecoverableException& ex) {
             A2_LOG_ERROR_EX("sqlite3-persistence: deleteTask failed", ex);
