@@ -114,7 +114,7 @@ jobs:
         docker cp "$id:/aria2/src/aria2c" ./aria2c
         docker rm "$id"
     - name: Verify fully static
-      run: file ./aria2c | grep -q 'statically linked'
+      run: file ./aria2c | grep -qE 'statically linked|static-pie'
     - name: Package
       run: |
         V=${{ needs.version.outputs.version }}
