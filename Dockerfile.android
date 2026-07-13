@@ -3,12 +3,12 @@
 #
 # $ sudo docker build -t aria2-android - < Dockerfile.android
 #
-# After successful build, android binary is located under
-# /root/build/aria2.  You can copy the binary using docker cp.  For
+# After successful build, the android binary is located at
+# /aria2/src/aria2c.  You can copy the binary using docker cp.  For
 # example, to copy aria2c binary to host file system location
 # /path/to/dest, do this:
 #
-# $ sudo docker run --rm -it -v /path/to/dest:/out aria2-android cp /root/build/aria2/src/aria2c /out
+# $ sudo docker run --rm -it -v /path/to/dest:/out aria2-android cp /aria2/src/aria2c /out
 
 FROM ubuntu:22.04
 MAINTAINER Tatsuhiro Tsujikawa
@@ -39,9 +39,6 @@ ENV AR=$TOOLCHAIN/bin/llvm-ar \
 RUN curl -L -O https://dl.google.com/android/repository/android-ndk-$NDK_VERSION-linux.zip && \
    unzip -q android-ndk-$NDK_VERSION-linux.zip && \
    rm android-ndk-$NDK_VERSION-linux.zip
-
-# aria2 version
-ARG ARIA2_VERSION=master
 
 # Library versions
 ENV OPENSSL_VERSION=1.1.1w
@@ -122,12 +119,11 @@ RUN ./configure \
     make -j$(nproc) install
 
 # Build aria2
-WORKDIR /root/build
-RUN git clone -b $ARIA2_VERSION --depth 1 https://github.com/aria2/aria2
+COPY . /aria2
+WORKDIR /aria2
+RUN autoreconf -fi
 
-WORKDIR /root/build/aria2
-RUN autoreconf -i && \
-    ./configure \
+RUN ./configure \
       --host=$HOST \
       --build=`dpkg-architecture -qDEB_BUILD_GNU_TYPE` \
       --disable-nls \

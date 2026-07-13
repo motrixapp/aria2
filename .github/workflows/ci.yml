@@ -1,4 +1,4 @@
-name: build
+name: ci
 
 on: [push, pull_request]
 
@@ -100,3 +100,16 @@ jobs:
     - name: Build aria2
       run: |
         make -j"$(nproc 2> /dev/null || sysctl -n hw.ncpu)" check
+
+  ci-required:
+    needs: build
+    if: always()
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Fail if any matrix job failed
+      run: |
+        if [ "${{ needs.build.result }}" != "success" ]; then
+          echo "matrix result: ${{ needs.build.result }}"
+          exit 1
+        fi
+        echo "all matrix jobs passed"
