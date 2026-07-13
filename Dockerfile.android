@@ -40,42 +40,30 @@ RUN curl -L -O https://dl.google.com/android/repository/android-ndk-$NDK_VERSION
    unzip -q android-ndk-$NDK_VERSION-linux.zip && \
    rm android-ndk-$NDK_VERSION-linux.zip
 
-# Library versions
-ENV OPENSSL_VERSION=1.1.1w
-ENV OPENSSL_ARCHIVE=openssl-$OPENSSL_VERSION.tar.gz
-ENV OPENSSL_URI=https://www.openssl.org/source/$OPENSSL_ARCHIVE
+# Shared dependency versions (single source of truth; see scripts/ci/deps.env).
+COPY scripts/ci/deps.env /deps.env
 
-ENV LIBEXPAT_VERSION=2.5.0
-ENV LIBEXPAT_ARCHIVE=expat-$LIBEXPAT_VERSION.tar.bz2
-ENV LIBEXPAT_URI=https://github.com/libexpat/libexpat/releases/download/R_2_5_0/$LIBEXPAT_ARCHIVE
-
-ENV ZLIB_VERSION=1.3.1
-ENV ZLIB_ARCHIVE=zlib-$ZLIB_VERSION.tar.gz
-ENV ZLIB_URI=https://github.com/madler/zlib/releases/download/v1.3.1/$ZLIB_ARCHIVE
-
-ENV CARES_VERSION=1.21.0
-ENV CARES_ARCHIVE=c-ares-$CARES_VERSION.tar.gz
-ENV CARES_URI=https://github.com/c-ares/c-ares/releases/download/cares-1_21_0/$CARES_ARCHIVE
-
-ENV LIBSSH2_VERSION=1.11.0
-ENV LIBSSH2_ARCHIVE=libssh2-$LIBSSH2_VERSION.tar.bz2
-ENV LIBSSH2_URI=https://libssh2.org/download/$LIBSSH2_ARCHIVE
-
-# Build OpenSSL
+# Build OpenSSL 3.5 LTS (migrated from EOL 1.1.1w). no-module compiles the legacy
+# provider INTO libcrypto.a so aria2's OSSL_PROVIDER_load(NULL,"legacy") (RC4 for
+# BitTorrent MSE) resolves in-process — a fully-static binary cannot dlopen
+# legacy.so. --libdir=lib avoids OpenSSL 3's default lib64 (libssh2/aria2 look in
+# lib). Target stays android-arm64 (NDK), NOT linux-*.
 WORKDIR /root/build
-RUN curl -L -O $OPENSSL_URI && tar xf $OPENSSL_ARCHIVE && rm $OPENSSL_ARCHIVE
-
-WORKDIR /root/build/openssl-$OPENSSL_VERSION
-RUN export ANDROID_NDK_HOME=$NDK PATH=$TOOLCHAIN/bin:$PATH && \
-    ./Configure no-shared --prefix=$PREFIX android-arm64 && \
+RUN . /deps.env && \
+    curl -L -O https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz && \
+    tar xf openssl-$OPENSSL_VERSION.tar.gz && \
+    cd openssl-$OPENSSL_VERSION && \
+    export ANDROID_NDK_HOME=$NDK PATH=$TOOLCHAIN/bin:$PATH && \
+    ./Configure no-shared no-module no-tests --prefix=$PREFIX --libdir=lib android-arm64 && \
     make -j$(nproc) && make install_sw
 
 # Build libexpat
 WORKDIR /root/build
-RUN curl -L -O $LIBEXPAT_URI && tar xf $LIBEXPAT_ARCHIVE && rm $LIBEXPAT_ARCHIVE
-
-WORKDIR /root/build/expat-$LIBEXPAT_VERSION
-RUN ./configure \
+RUN . /deps.env && \
+    curl -L -O https://github.com/libexpat/libexpat/releases/download/R_2_7_5/expat-$EXPAT_VERSION.tar.bz2 && \
+    tar xf expat-$EXPAT_VERSION.tar.bz2 && \
+    cd expat-$EXPAT_VERSION && \
+    ./configure \
       --host=$HOST \
       --build=`dpkg-architecture -qDEB_BUILD_GNU_TYPE` \
       --prefix=$PREFIX \
@@ -84,10 +72,11 @@ RUN ./configure \
 
 # Build zlib
 WORKDIR /root/build
-RUN curl -L -O $ZLIB_URI && tar xf $ZLIB_ARCHIVE && rm $ZLIB_ARCHIVE
-
-WORKDIR /root/build/zlib-$ZLIB_VERSION
-RUN ./configure \
+RUN . /deps.env && \
+    curl -L -O https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/zlib-$ZLIB_VERSION.tar.gz && \
+    tar xf zlib-$ZLIB_VERSION.tar.gz && \
+    cd zlib-$ZLIB_VERSION && \
+    ./configure \
       --prefix=$PREFIX \
       --libdir=$PREFIX/lib \
       --includedir=$PREFIX/include \
@@ -96,10 +85,11 @@ RUN ./configure \
 
 # Build c-ares
 WORKDIR /root/build
-RUN curl -L -O $CARES_URI && tar xf $CARES_ARCHIVE && rm $CARES_ARCHIVE
-
-WORKDIR /root/build/c-ares-$CARES_VERSION
-RUN ./configure \
+RUN . /deps.env && \
+    curl -L -O https://github.com/c-ares/c-ares/releases/download/v$CARES_VERSION/c-ares-$CARES_VERSION.tar.gz && \
+    tar xf c-ares-$CARES_VERSION.tar.gz && \
+    cd c-ares-$CARES_VERSION && \
+    ./configure \
       --host=$HOST \
       --build=`dpkg-architecture -qDEB_BUILD_GNU_TYPE` \
       --prefix=$PREFIX \
@@ -108,10 +98,11 @@ RUN ./configure \
 
 # Build libssh2
 WORKDIR /root/build
-RUN curl -L -O $LIBSSH2_URI && tar xf $LIBSSH2_ARCHIVE && rm $LIBSSH2_ARCHIVE
-
-WORKDIR /root/build/libssh2-$LIBSSH2_VERSION
-RUN ./configure \
+RUN . /deps.env && \
+    curl -L -O https://libssh2.org/download/libssh2-$LIBSSH2_VERSION.tar.bz2 && \
+    tar xf libssh2-$LIBSSH2_VERSION.tar.bz2 && \
+    cd libssh2-$LIBSSH2_VERSION && \
+    ./configure \
       --host=$HOST \
       --build=`dpkg-architecture -qDEB_BUILD_GNU_TYPE` \
       --prefix=$PREFIX \
