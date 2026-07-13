@@ -38,6 +38,7 @@
 
 #include <chrono>
 #include <functional>
+#include <set>
 #include <sstream>
 
 #include <sqlite3.h>
@@ -695,6 +696,13 @@ void Sqlite3DownloadResultRepository::doInsert(
       sqlite3_clear_bindings(files);
 
       // Step 3: INSERT one row per URI on this file.
+      // Dedup before INSERT: the PK is (history_id, file_index, uri), and a
+      // URI can legitimately appear multiple times in aria2's in-memory state
+      // — spentUris_ accumulates one entry per connection attempt (e.g.
+      // --split=N produces N copies of the same URL), and reuseUri() can
+      // also clone a URI from spentUris_ back into uris_ for retry. When a
+      // URI exists in both pools, "used" wins over "waiting" because the
+      // former carries strictly more information.
       auto bindUri = [&](const std::string& uri, const char* state) {
         sqlite3_bind_int64(uris, 1, historyId);
         sqlite3_bind_int(uris, 2, static_cast<int>(fi));
@@ -709,11 +717,16 @@ void Sqlite3DownloadResultRepository::doInsert(
         sqlite3_reset(uris);
         sqlite3_clear_bindings(uris);
       };
+      std::set<std::string> written;
       for (const auto& u : fe->getSpentUris()) {
-        bindUri(u, "used");
+        if (written.insert(u).second) {
+          bindUri(u, "used");
+        }
       }
       for (const auto& u : fe->getRemainingUris()) {
-        bindUri(u, "waiting");
+        if (written.insert(u).second) {
+          bindUri(u, "waiting");
+        }
       }
     }
   });
