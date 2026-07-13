@@ -1,0 +1,37 @@
+# Keep the docker build context small and free of stale in-tree artifacts.
+# The Dockerfiles COPY the whole tree then run `autoreconf -i` + configure,
+# so only tracked source + autotools inputs are needed. In CI the checkout is
+# clean; these excludes matter mostly for local `docker build` from a working
+# tree that also holds native build outputs.
+
+# Local build trees / release scratch (hundreds of MB each, arch-specific)
+build/
+build-release/
+build-nosqlite/
+mingw-out/
+android-out/
+
+# VCS, CI config, docs, and agent scratch — not needed to compile aria2
+.git/
+.github/
+docs/
+.superpowers/
+.claude/
+
+# Editor / OS / dependency noise
+node_modules/
+.DS_Store
+**/.DS_Store
+
+# Object files and libtool intermediates from any in-tree build
+*.o
+*.lo
+*.la
+.deps/
+.libs/
+
+# Distribution archives (deps are fetched by the Dockerfiles at build time)
+*.tar.bz2
+*.tar.gz
+*.tar.xz
+*.zip

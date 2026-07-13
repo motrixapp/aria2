@@ -3,12 +3,12 @@
 #
 # $ sudo docker build -t aria2-android - < Dockerfile.android
 #
-# After successful build, android binary is located under
-# /root/build/aria2.  You can copy the binary using docker cp.  For
+# After successful build, the android binary is located at
+# /aria2/src/aria2c.  You can copy the binary using docker cp.  For
 # example, to copy aria2c binary to host file system location
 # /path/to/dest, do this:
 #
-# $ sudo docker run --rm -it -v /path/to/dest:/out aria2-android cp /root/build/aria2/src/aria2c /out
+# $ sudo docker run --rm -it -v /path/to/dest:/out aria2-android cp /aria2/src/aria2c /out
 
 FROM ubuntu:22.04
 MAINTAINER Tatsuhiro Tsujikawa
