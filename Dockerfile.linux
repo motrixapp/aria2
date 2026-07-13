@@ -1,0 +1,27 @@
+FROM ubuntu:22.04
+ARG TRIPLE=x86_64-linux-musl
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y \
+    autoconf automake autopoint libtool pkg-config git curl ca-certificates \
+    make xz-utils dpkg-dev && rm -rf /var/lib/apt/lists/*
+# musl cross toolchain
+RUN curl -L https://musl.cc/${TRIPLE}-cross.tgz | tar xz -C /opt
+ENV PATH=/opt/${TRIPLE}-cross/bin:$PATH
+ENV CC=${TRIPLE}-gcc CXX=${TRIPLE}-g++ \
+    AR=${TRIPLE}-ar RANLIB=${TRIPLE}-ranlib STRIP=${TRIPLE}-strip
+ENV PREFIX=/usr/local/${TRIPLE}
+# Static deps: zlib, c-ares, expat, sqlite3, openssl, libssh2, libgmp
+COPY scripts/ci/build-linux-deps.sh /build-linux-deps.sh
+RUN sh /build-linux-deps.sh "${TRIPLE}"
+COPY . /aria2
+WORKDIR /aria2
+RUN autoreconf -i && ./configure \
+      --host=${TRIPLE} \
+      --enable-static --disable-shared --disable-nls \
+      --with-openssl --without-gnutls --without-appletls \
+      --with-libz --with-libcares --with-libexpat --with-sqlite3 \
+      --with-libssh2 --with-libgmp --with-libxml2=no \
+      CFLAGS="-Os -I$PREFIX/include" CXXFLAGS="-Os -I$PREFIX/include" \
+      LDFLAGS="-static -all-static -L$PREFIX/lib" \
+      PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig PKG_CONFIG="pkg-config --static" && \
+    make -j"$(nproc)" && ${TRIPLE}-strip src/aria2c
