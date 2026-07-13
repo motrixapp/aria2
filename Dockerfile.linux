@@ -22,6 +22,6 @@ RUN autoreconf -fi && ./configure \
       --with-libz --with-libcares --with-libexpat --with-sqlite3 \
       --with-libssh2 --with-libgmp --without-libxml2 \
       CFLAGS="-Os -I$PREFIX/include" CXXFLAGS="-Os -I$PREFIX/include" \
-      LDFLAGS="-static -all-static -L$PREFIX/lib" \
+      LDFLAGS="-static -L$PREFIX/lib" \
       PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig PKG_CONFIG="pkg-config --static" && \
     make -j"$(nproc)" && ${TRIPLE}-strip src/aria2c
