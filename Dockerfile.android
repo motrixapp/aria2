@@ -40,9 +40,6 @@ RUN curl -L -O https://dl.google.com/android/repository/android-ndk-$NDK_VERSION
    unzip -q android-ndk-$NDK_VERSION-linux.zip && \
    rm android-ndk-$NDK_VERSION-linux.zip
 
-# aria2 version
-ARG ARIA2_VERSION=master
-
 # Library versions
 ENV OPENSSL_VERSION=1.1.1w
 ENV OPENSSL_ARCHIVE=openssl-$OPENSSL_VERSION.tar.gz
@@ -122,12 +119,11 @@ RUN ./configure \
     make -j$(nproc) install
 
 # Build aria2
-WORKDIR /root/build
-RUN git clone -b $ARIA2_VERSION --depth 1 https://github.com/aria2/aria2
+COPY . /aria2
+WORKDIR /aria2
+RUN autoreconf -i
 
-WORKDIR /root/build/aria2
-RUN autoreconf -i && \
-    ./configure \
+RUN ./configure \
       --host=$HOST \
       --build=`dpkg-architecture -qDEB_BUILD_GNU_TYPE` \
       --disable-nls \
