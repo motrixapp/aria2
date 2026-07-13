@@ -48,12 +48,14 @@ COPY scripts/ci/deps.env /deps.env
 # BitTorrent MSE) resolves in-process — a fully-static binary cannot dlopen
 # legacy.so. --libdir=lib avoids OpenSSL 3's default lib64 (libssh2/aria2 look in
 # lib). Target stays android-arm64 (NDK), NOT linux-*.
+# NOTE: OpenSSL 3.x's android-* target reads ANDROID_NDK_ROOT (the 1.1.1 name
+# ANDROID_NDK_HOME is ignored -> "$ANDROID_NDK_ROOT is not defined"). Export both.
 WORKDIR /root/build
 RUN . /deps.env && \
     curl -L -O https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz && \
     tar xf openssl-$OPENSSL_VERSION.tar.gz && \
     cd openssl-$OPENSSL_VERSION && \
-    export ANDROID_NDK_HOME=$NDK PATH=$TOOLCHAIN/bin:$PATH && \
+    export ANDROID_NDK_ROOT=$NDK ANDROID_NDK_HOME=$NDK PATH=$TOOLCHAIN/bin:$PATH && \
     ./Configure no-shared no-module no-tests --prefix=$PREFIX --libdir=lib android-arm64 && \
     make -j$(nproc) && make install_sw
 
