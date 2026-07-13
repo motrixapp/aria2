@@ -26,7 +26,9 @@ case "$TRIPLE" in
   arm*)      ossl_target=linux-generic32 ;;
   *)         ossl_target=linux-generic64 ;;
 esac
-( cd openssl-3.4.0 && ./Configure no-shared no-tests --prefix="$PREFIX" --cross-compile-prefix="${TRIPLE}-" "$ossl_target" && make -j$j && make install_sw )
+# CC/AR/RANLIB come from the Dockerfile ENV (already ${TRIPLE}-*); do NOT also
+# pass --cross-compile-prefix or openssl doubles it (…-musl-…-musl-gcc: not found).
+( cd openssl-3.4.0 && ./Configure no-shared no-tests --prefix="$PREFIX" "$ossl_target" && make -j$j && make install_sw )
 # libssh2
 fetch https://github.com/libssh2/libssh2/releases/download/libssh2-1.11.1/libssh2-1.11.1.tar.gz h.tgz
 ( cd libssh2-1.11.1 && ./configure --host="$TRIPLE" --enable-static --disable-shared --with-crypto=openssl --with-libssl-prefix="$PREFIX" --prefix="$PREFIX" && make -j$j && make install )
