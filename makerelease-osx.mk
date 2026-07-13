@@ -103,52 +103,56 @@ LTO_FLAGS = -flto -ffunction-sections -fdata-sections
 # Detect native architecture
 NATIVE_ARCH := $(shell uname -m)
 
+# Shared dependency versions (single source of truth; see scripts/ci/deps.env).
+# Uses $(SRCDIR) because Make `include` resolves relative to the working dir.
+include $(SRCDIR)/scripts/ci/deps.env
+
 # Dependency versions
-zlib_version = 1.3.2
+zlib_version = $(ZLIB_VERSION)
 zlib_hash = bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16
 zlib_url = https://zlib.net/zlib-$(zlib_version).tar.gz
 
-expat_version = 2.7.5
+expat_version = $(EXPAT_VERSION)
 expat_hash = 9931f9860d18e6cf72d183eb8f309bfb96196c00e1d40caa978e95bc9aa978b6
 expat_url = https://github.com/libexpat/libexpat/releases/download/R_2_7_5/expat-$(expat_version).tar.gz
 expat_cflags=$(CFLAGS) $(LTO_FLAGS)
 expat_ldflags=$(CFLAGS) $(LTO_FLAGS)
 
-cares_version = 1.34.6
+cares_version = $(CARES_VERSION)
 cares_hash = 912dd7cc3b3e8a79c52fd7fb9c0f4ecf0aaa73e45efda880266a2d6e26b84ef5
 cares_url = https://github.com/c-ares/c-ares/releases/download/v$(cares_version)/c-ares-$(cares_version).tar.gz
 cares_confflags = "--enable-optimize=$(OPTFLAGS)"
 cares_cflags=$(CFLAGS) $(LTO_FLAGS)
 cares_ldflags=$(CFLAGS) $(LTO_FLAGS)
 
-sqlite_version = autoconf-3510300
+sqlite_version = $(SQLITE_VERSION)
 sqlite_hash = 81f5be397049b0cae1b167f2225af7646fc0f82e4a9b3c48c9ea3a533e21d77a
-sqlite_url = https://www.sqlite.org/2026/sqlite-$(sqlite_version).tar.gz
+sqlite_url = https://www.sqlite.org/$(SQLITE_YEAR)/sqlite-$(sqlite_version).tar.gz
 sqlite_cflags=$(CFLAGS) $(LTO_FLAGS)
 sqlite_ldflags=$(CFLAGS) $(LTO_FLAGS)
 
-gmp_version = 6.3.0
+gmp_version = $(GMP_VERSION)
 gmp_hash = a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898
 gmp_url = https://ftp.gnu.org/gnu/gmp/gmp-$(gmp_version).tar.xz
 gmp_confflags = --disable-cxx --enable-assembly --with-pic --enable-fat
 gmp_cflags=$(CFLAGS)
 gmp_cxxflags=$(CXXFLAGS)
 
-libgpgerror_version = 1.59
+libgpgerror_version = $(LIBGPGERROR_VERSION)
 libgpgerror_hash = a19bc5087fd97026d93cb4b45d51638d1a25202a5e1fbc3905799f424cfa6134
 libgpgerror_url = https://gnupg.org/ftp/gcrypt/libgpg-error/libgpg-error-$(libgpgerror_version).tar.bz2
 libgpgerror_cflags=$(CFLAGS) $(LTO_FLAGS)
 libgpgerror_ldflags=$(CFLAGS) $(LTO_FLAGS)
 libgpgerror_confflags = --with-pic --disable-languages --disable-doc --disable-nls
 
-libgcrypt_version = 1.11.3
+libgcrypt_version = $(LIBGCRYPT_VERSION)
 libgcrypt_hash = 2c6d562e894b2b06eefbc427d12d51ee9d3e50e90012ad6596b4cb3e421a95f2
 libgcrypt_url = https://gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-$(libgcrypt_version).tar.bz2
 libgcrypt_confflags=--with-gpg-error-prefix=$(PWD)/arch --disable-O-flag-munging --disable-asm
 libgcrypt_cflags=$(PLATFORMFLAGS)
 libgcrypt_cxxflags=$(PLATFORMFLAGS)
 
-libssh2_version = 1.11.1
+libssh2_version = $(LIBSSH2_VERSION)
 libssh2_hash = d9ec76cbe34db98eec3539fe2c899d26b0c837cb3eb466a56b0f109cabf658f7
 libssh2_url = https://www.libssh2.org/download/libssh2-$(libssh2_version).tar.gz
 libssh2_cflags=$(CFLAGS) $(LTO_FLAGS)
@@ -160,7 +164,7 @@ libssh2_nocheck = yes
 # so skip per-dep `make check`. TCL-based tests need a separate harness.
 sqlite_nocheck = yes
 
-cppunit_version = 1.15.1
+cppunit_version = $(CPPUNIT_VERSION)
 cppunit_hash = 89c5c6665337f56fd2db36bc3805a5619709d51fb136e51937072f63fcc717a7
 cppunit_url = https://dev-www.libreoffice.org/src/cppunit-$(cppunit_version).tar.gz
 cppunit_cflags=$(CFLAGS) $(LTO_FLAGS)
