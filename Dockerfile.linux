@@ -24,5 +24,6 @@ RUN autoreconf -fi && ./configure \
       CFLAGS="-Os -I$PREFIX/include" CXXFLAGS="-Os -I$PREFIX/include" \
       ARIA2_STATIC=yes \
       LDFLAGS="-L$PREFIX/lib" \
-      PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig PKG_CONFIG="pkg-config --static" && \
+      PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig" \
+      PKG_CONFIG="pkg-config --static" && \
     make -j"$(nproc)" && ${TRIPLE}-strip src/aria2c

@@ -17,18 +17,21 @@ fetch https://github.com/libexpat/libexpat/releases/download/R_2_6_4/expat-2.6.4
 # sqlite3
 fetch https://www.sqlite.org/2024/sqlite-autoconf-3470200.tar.gz s.tgz
 ( cd sqlite-autoconf-3470200 && ./configure --host="$TRIPLE" --enable-static --disable-shared --prefix="$PREFIX" && make -j$j && make install )
-# openssl — pick the Configure target by arch/word size; linux-generic64 assumes
-# a 64-bit word and miscompiles/fails on the 32-bit armv7l target.
-fetch https://github.com/openssl/openssl/releases/download/openssl-3.4.0/openssl-3.4.0.tar.gz o.tgz
+# openssl 3.5 LTS. no-module compiles the legacy provider INTO libcrypto.a as a
+# built-in, so aria2's OSSL_PROVIDER_load(NULL,"legacy") (RC4, for BitTorrent MSE)
+# resolves it in-process instead of dlopen'ing legacy.so — which a fully-static
+# binary cannot do. no-shared alone does NOT disable the dynamic provider module.
+# Per-arch target: generic64 assumes a 64-bit word (breaks 32-bit armv7l).
+# CC/AR/RANLIB come from the Dockerfile ENV (already ${TRIPLE}-*); do NOT also pass
+# --cross-compile-prefix or openssl doubles it (…-musl-…-musl-gcc: not found).
+fetch https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz o.tgz
 case "$TRIPLE" in
   x86_64-*)  ossl_target=linux-x86_64 ;;
   aarch64-*) ossl_target=linux-aarch64 ;;
-  arm*)      ossl_target=linux-generic32 ;;
+  arm*)      ossl_target=linux-armv4 ;;
   *)         ossl_target=linux-generic64 ;;
 esac
-# CC/AR/RANLIB come from the Dockerfile ENV (already ${TRIPLE}-*); do NOT also
-# pass --cross-compile-prefix or openssl doubles it (…-musl-…-musl-gcc: not found).
-( cd openssl-3.4.0 && ./Configure no-shared no-tests --prefix="$PREFIX" --libdir=lib "$ossl_target" && make -j$j && make install_sw )
+( cd openssl-3.5.7 && ./Configure no-shared no-module no-tests --prefix="$PREFIX" --libdir=lib "$ossl_target" && make -j$j && make install_sw )
 # libssh2
 fetch https://github.com/libssh2/libssh2/releases/download/libssh2-1.11.1/libssh2-1.11.1.tar.gz h.tgz
 ( cd libssh2-1.11.1 && ./configure --host="$TRIPLE" --enable-static --disable-shared --with-crypto=openssl --with-libssl-prefix="$PREFIX" --prefix="$PREFIX" && make -j$j && make install )
