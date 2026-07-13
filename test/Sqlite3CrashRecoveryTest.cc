@@ -56,6 +56,7 @@
 
 #include <sqlite3.h>
 
+#include "a2functional.h"
 #include "RecoverableException.h"
 #include "Sqlite3PersistenceStore.h"
 
@@ -240,7 +241,7 @@ void Sqlite3CrashRecoveryTest::testLeakedHandleWalRecovery()
   removeDb(path);
 
   {
-    auto store = std::make_unique<Sqlite3PersistenceStore>(path);
+    auto store = make_unique<Sqlite3PersistenceStore>(path);
     store->open();
 
     store->withTransaction([&]() {
