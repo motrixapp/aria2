@@ -17,9 +17,16 @@ fetch https://github.com/libexpat/libexpat/releases/download/R_2_6_4/expat-2.6.4
 # sqlite3
 fetch https://www.sqlite.org/2024/sqlite-autoconf-3470200.tar.gz s.tgz
 ( cd sqlite-autoconf-3470200 && ./configure --host="$TRIPLE" --enable-static --disable-shared --prefix="$PREFIX" && make -j$j && make install )
-# openssl
+# openssl — pick the Configure target by arch/word size; linux-generic64 assumes
+# a 64-bit word and miscompiles/fails on the 32-bit armv7l target.
 fetch https://github.com/openssl/openssl/releases/download/openssl-3.4.0/openssl-3.4.0.tar.gz o.tgz
-( cd openssl-3.4.0 && ./Configure no-shared no-tests --prefix="$PREFIX" --cross-compile-prefix="${TRIPLE}-" linux-generic64 && make -j$j && make install_sw )
+case "$TRIPLE" in
+  x86_64-*)  ossl_target=linux-x86_64 ;;
+  aarch64-*) ossl_target=linux-aarch64 ;;
+  arm*)      ossl_target=linux-generic32 ;;
+  *)         ossl_target=linux-generic64 ;;
+esac
+( cd openssl-3.4.0 && ./Configure no-shared no-tests --prefix="$PREFIX" --cross-compile-prefix="${TRIPLE}-" "$ossl_target" && make -j$j && make install_sw )
 # libssh2
 fetch https://github.com/libssh2/libssh2/releases/download/libssh2-1.11.1/libssh2-1.11.1.tar.gz h.tgz
 ( cd libssh2-1.11.1 && ./configure --host="$TRIPLE" --enable-static --disable-shared --with-crypto=openssl --with-libssl-prefix="$PREFIX" --prefix="$PREFIX" && make -j$j && make install )
