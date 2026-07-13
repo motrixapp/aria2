@@ -15,7 +15,7 @@ COPY scripts/ci/build-linux-deps.sh /build-linux-deps.sh
 RUN sh /build-linux-deps.sh "${TRIPLE}"
 COPY . /aria2
 WORKDIR /aria2
-RUN autoreconf -i && ./configure \
+RUN autoreconf -fi && ./configure \
       --host=${TRIPLE} \
       --enable-static --disable-shared --disable-nls \
       --with-openssl --without-gnutls --without-appletls \

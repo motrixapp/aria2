@@ -121,7 +121,7 @@ RUN ./configure \
 # Build aria2
 COPY . /aria2
 WORKDIR /aria2
-RUN autoreconf -i
+RUN autoreconf -fi
 
 RUN ./configure \
       --host=$HOST \

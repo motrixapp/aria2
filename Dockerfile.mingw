@@ -107,7 +107,7 @@ RUN tar xf libssh2-1.11.0.tar.bz2 && \
 
 COPY . /aria2
 WORKDIR /aria2
-RUN autoreconf -i
+RUN autoreconf -fi
 
 RUN ./mingw-config && make -j$(nproc) && \
     $HOST-strip src/aria2c.exe
