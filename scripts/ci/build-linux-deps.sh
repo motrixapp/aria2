@@ -4,7 +4,7 @@ set -eu
 TRIPLE="$1"
 j="$(nproc)"
 mkdir -p /src && cd /src
-fetch() { curl -L -o "$2" "$1"; tar xf "$2"; }
+fetch() { curl -fSL --retry 3 --retry-delay 2 --retry-connrefused -o "$2" "$1"; tar xf "$2"; }
 # zlib
 fetch https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz z.tgz
 ( cd zlib-1.3.1 && CHOST="$TRIPLE" ./configure --static --prefix="$PREFIX" && make -j$j && make install )
