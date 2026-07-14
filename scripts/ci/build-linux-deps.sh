@@ -7,8 +7,16 @@ j="$(nproc)"
 # __atomic_*_8, which armv7 resolves via libatomic (linked by libssh2's examples,
 # and later by aria2). 64-bit targets resolve them as intrinsics.
 case "$TRIPLE" in
-  arm*) ATOMIC_LIB=-latomic ;;
-  *)    ATOMIC_LIB= ;;
+  arm*)
+    ATOMIC_LIB=-latomic
+    # This armv7 gcc assembles below armv6 by default, so GMP's mpn v6 asm
+    # (umaal, an ARMv6+ instruction) is rejected; build GMP for armv7-a.
+    GMP_CFLAGS=-march=armv7-a
+    ;;
+  *)
+    ATOMIC_LIB=
+    GMP_CFLAGS=
+    ;;
 esac
 # Shared dependency versions (see scripts/ci/deps.env). dirname "$0" is / in the
 # Dockerfile.linux container, where deps.env is COPY'd to /deps.env.
@@ -50,4 +58,4 @@ fetch https://github.com/libssh2/libssh2/releases/download/libssh2-$LIBSSH2_VERS
 ( cd libssh2-$LIBSSH2_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --with-crypto=openssl --with-libssl-prefix="$PREFIX" --prefix="$PREFIX" LIBS="$ATOMIC_LIB" && make -j$j && make install )
 # gmp — from the GNU mirror; gmplib.org stalls (0 bytes) against CI/datacenter IPs
 fetch https://ftp.gnu.org/gnu/gmp/gmp-$GMP_VERSION.tar.xz g.txz
-( cd gmp-$GMP_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --prefix="$PREFIX" && make -j$j && make install )
+( cd gmp-$GMP_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --prefix="$PREFIX" ${GMP_CFLAGS:+CFLAGS="$GMP_CFLAGS"} && make -j$j && make install )
