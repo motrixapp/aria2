@@ -4,12 +4,15 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     autoconf automake autopoint libtool pkg-config git curl ca-certificates \
     make xz-utils dpkg-dev && rm -rf /var/lib/apt/lists/*
-# musl cross toolchain. musl.cc frequently truncates downloads (the old
-# `curl | tar` pipe then died with tar exit 2); fetch to a file with retries and
-# a stalled-transfer abort, fall back to the more.musl.cc mirror, extract last.
+# musl cross toolchain. musl.cc (and its more.musl.cc mirror) are unreachable
+# from GitHub Actions runners, so pull from our own vendored copy on the repo's
+# "musl-toolchains" release first (reliable from Actions), keeping musl.cc as a
+# best-effort fallback. Fetch to a file with retries and a stalled-transfer
+# abort, and extract only after a clean download.
 RUN set -eu; \
     ok=0; \
     for url in \
+      "https://github.com/motrixapp/aria2/releases/download/musl-toolchains/${TRIPLE}-cross.tgz" \
       "https://musl.cc/${TRIPLE}-cross.tgz" \
       "https://more.musl.cc/11/x86_64-linux-musl/${TRIPLE}-cross.tgz"; do \
       echo "Fetching musl toolchain: $url"; \
