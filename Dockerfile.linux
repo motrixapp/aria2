@@ -4,8 +4,23 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     autoconf automake autopoint libtool pkg-config git curl ca-certificates \
     make xz-utils dpkg-dev && rm -rf /var/lib/apt/lists/*
-# musl cross toolchain
-RUN curl -L https://musl.cc/${TRIPLE}-cross.tgz | tar xz -C /opt
+# musl cross toolchain. musl.cc frequently truncates downloads (the old
+# `curl | tar` pipe then died with tar exit 2); fetch to a file with retries and
+# a stalled-transfer abort, fall back to the more.musl.cc mirror, extract last.
+RUN set -eu; \
+    ok=0; \
+    for url in \
+      "https://musl.cc/${TRIPLE}-cross.tgz" \
+      "https://more.musl.cc/11/x86_64-linux-musl/${TRIPLE}-cross.tgz"; do \
+      echo "Fetching musl toolchain: $url"; \
+      if curl -fL --retry 5 --retry-delay 3 --retry-all-errors --retry-connrefused \
+           --connect-timeout 30 --speed-limit 1 --speed-time 30 \
+           -o /tmp/toolchain.tgz "$url" && tar xzf /tmp/toolchain.tgz -C /opt; then \
+        ok=1; rm -f /tmp/toolchain.tgz; break; \
+      fi; \
+      rm -f /tmp/toolchain.tgz; \
+    done; \
+    [ "$ok" = 1 ] || { echo "musl toolchain download failed from all mirrors" >&2; exit 1; }
 ENV PATH=/opt/${TRIPLE}-cross/bin:$PATH
 ENV CC=${TRIPLE}-gcc CXX=${TRIPLE}-g++ \
     AR=${TRIPLE}-ar RANLIB=${TRIPLE}-ranlib STRIP=${TRIPLE}-strip

@@ -7,7 +7,10 @@ j="$(nproc)"
 # Dockerfile.linux container, where deps.env is COPY'd to /deps.env.
 . "$(dirname "$0")/deps.env"
 mkdir -p /src && cd /src
-fetch() { curl -fSL --retry 3 --retry-delay 2 --retry-connrefused -o "$2" "$1"; tar xf "$2"; }
+# --speed-limit 1 --speed-time 30 aborts a transfer stalled below 1 B/s for 30s
+# (e.g. gmplib.org accepting the connection then sending 0 bytes) so --retry can
+# re-attempt instead of hanging until the job timeout.
+fetch() { curl -fSL --retry 5 --retry-delay 3 --retry-connrefused --retry-all-errors --connect-timeout 30 --speed-limit 1 --speed-time 30 -o "$2" "$1"; tar xf "$2"; }
 # zlib
 fetch https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/zlib-$ZLIB_VERSION.tar.gz z.tgz
 ( cd zlib-$ZLIB_VERSION && CHOST="$TRIPLE" ./configure --static --prefix="$PREFIX" && make -j$j && make install )
@@ -38,6 +41,6 @@ esac
 # libssh2
 fetch https://github.com/libssh2/libssh2/releases/download/libssh2-$LIBSSH2_VERSION/libssh2-$LIBSSH2_VERSION.tar.gz h.tgz
 ( cd libssh2-$LIBSSH2_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --with-crypto=openssl --with-libssl-prefix="$PREFIX" --prefix="$PREFIX" && make -j$j && make install )
-# gmp
-fetch https://gmplib.org/download/gmp/gmp-$GMP_VERSION.tar.xz g.txz
+# gmp — from the GNU mirror; gmplib.org stalls (0 bytes) against CI/datacenter IPs
+fetch https://ftp.gnu.org/gnu/gmp/gmp-$GMP_VERSION.tar.xz g.txz
 ( cd gmp-$GMP_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --prefix="$PREFIX" && make -j$j && make install )
