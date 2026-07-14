@@ -29,10 +29,13 @@ jobs:
   macos:
     needs: version
     strategy:
+      fail-fast: false
       matrix:
         include:
         - { arch: arm64,  asset_arch: arm64, runner: macos-14 }
-        - { arch: x86_64, asset_arch: x64,   runner: macos-13 }
+        # macos-13 (Intel) runners are deprecated/unavailable; macos-26-intel is
+        # the current free standard Intel x86_64 runner (macOS 26 Tahoe).
+        - { arch: x86_64, asset_arch: x64,   runner: macos-26-intel }
     runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@v6
