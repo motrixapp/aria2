@@ -418,6 +418,30 @@ private:
     return resp.substr(pos, end - pos);
   }
 
+  // Add an active URI that fails as fast and deterministically as possible:
+  // one try, no retry wait. Combined with a closed loopback target
+  // (http://127.0.0.1:1/...) the download hits connection-refused and lands
+  // in download_history within milliseconds — no DNS, no public network, and
+  // no dependence on a remote host's latency or response, which is what made
+  // the example.com-based version flaky under CI/ASan load.
+  std::string addActiveFailFast(const std::string& uri)
+  {
+    std::string resp = rpc(
+        "aria2.addUri",
+        "[\"token:integrationtestsecret\",[\"" + uri +
+        "\"],{\"max-tries\":\"1\",\"retry-wait\":\"0\"}]");
+    auto pos = resp.find("\"result\":\"");
+    if (pos == std::string::npos) {
+      return "";
+    }
+    pos += 10;
+    auto end = resp.find('"', pos);
+    if (end == std::string::npos) {
+      return "";
+    }
+    return resp.substr(pos, end - pos);
+  }
+
   // -------------------------------------------------------------------------
   // DB inspection helpers (read-only; only call after kill+waitpid)
   // -------------------------------------------------------------------------
@@ -842,14 +866,16 @@ void Sqlite3SymmetryIntegrationTest::testRemoveDownloadResultPersists()
 {
   startWithSqlite();
 
-  // Add an active (non-paused) task pointing at a URL that will fail quickly
-  // (DNS/connection failure) so aria2 moves it to download_history.
-  addActive("http://example.com/remove-dr.bin");
+  // Add an active task pointing at a closed loopback port so it fails
+  // immediately (connection refused, single try, no retry wait) and aria2
+  // moves it to download_history. Deterministic and network-free.
+  addActiveFailFast("http://127.0.0.1:1/remove-dr.bin");
 
-  // Wait for the download to fail and appear in tellStopped.
+  // Poll until the failed download appears in tellStopped. Condition-based
+  // wait with a generous ceiling (~30 s) so the test stays robust under CI
+  // and ASan load; on success it breaks in a few hundred ms.
   std::string stoppedGid;
-  for (int i = 0; i < 40; ++i) {
-    ::usleep(250000); // 250 ms
+  for (int i = 0; i < 300; ++i) {
     std::string stopped = rpc("aria2.tellStopped",
                               "[\"token:integrationtestsecret\",0,10]");
     // Look for a gid in the result array.
@@ -862,6 +888,7 @@ void Sqlite3SymmetryIntegrationTest::testRemoveDownloadResultPersists()
         break;
       }
     }
+    ::usleep(100000); // 100 ms
   }
   CPPUNIT_ASSERT_MESSAGE("download should appear in tellStopped", !stoppedGid.empty());
 
@@ -897,21 +924,23 @@ void Sqlite3SymmetryIntegrationTest::testPurgeDownloadResultPersists()
 {
   startWithSqlite();
 
-  // Add 3 active tasks that will fail quickly.
-  addActive("http://example.com/purge1.bin");
-  addActive("http://example.com/purge2.bin");
-  addActive("http://example.com/purge3.bin");
+  // Add 3 active tasks that fail immediately (closed loopback port, single
+  // try, no retry wait). Deterministic and network-free.
+  addActiveFailFast("http://127.0.0.1:1/purge1.bin");
+  addActiveFailFast("http://127.0.0.1:1/purge2.bin");
+  addActiveFailFast("http://127.0.0.1:1/purge3.bin");
 
-  // Wait for ALL 3 to appear in tellStopped before purging. Otherwise a
+  // Wait for ALL 3 to land in download_history before purging. Otherwise a
   // download still in flight may fail after purge and re-populate
   // download_history before our post-kill DB check, causing a flaky failure.
+  // Condition-based wait with a generous ceiling (~30 s) for CI/ASan load.
   int64_t before = 0;
-  for (int i = 0; i < 100; ++i) {
-    ::usleep(200000); // 200 ms; total budget ~20 s
+  for (int i = 0; i < 300; ++i) {
     before = dbCount("SELECT COUNT(*) FROM download_history");
     if (before >= 3) {
       break;
     }
+    ::usleep(100000); // 100 ms
   }
   CPPUNIT_ASSERT_MESSAGE("all 3 downloads should be in download_history "
                          "before purge: got " + std::to_string(before),
