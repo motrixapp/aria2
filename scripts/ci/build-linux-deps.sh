@@ -9,13 +9,16 @@ j="$(nproc)"
 case "$TRIPLE" in
   arm*)
     ATOMIC_LIB=-latomic
-    # This armv7 gcc assembles below armv6 by default, so GMP's mpn v6 asm
-    # (umaal, an ARMv6+ instruction) is rejected; build GMP for armv7-a.
-    GMP_CFLAGS=-march=armv7-a
+    # GMP selects ARMv6 mpn asm (umaal) for armv7l, but this toolchain assembles
+    # below armv6 by default; passing -march to fix that instead breaks GMP's
+    # own compiler probe ("could not find a working compiler"). Disable GMP's
+    # assembly and use the portable C mpn — fast enough for aria2's occasional
+    # bignum use, and it sidesteps the whole arm-asm arch-mismatch class.
+    GMP_EXTRA=--disable-assembly
     ;;
   *)
     ATOMIC_LIB=
-    GMP_CFLAGS=
+    GMP_EXTRA=
     ;;
 esac
 # Shared dependency versions (see scripts/ci/deps.env). dirname "$0" is / in the
@@ -58,4 +61,4 @@ fetch https://github.com/libssh2/libssh2/releases/download/libssh2-$LIBSSH2_VERS
 ( cd libssh2-$LIBSSH2_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --with-crypto=openssl --with-libssl-prefix="$PREFIX" --prefix="$PREFIX" LIBS="$ATOMIC_LIB" && make -j$j && make install )
 # gmp — from the GNU mirror; gmplib.org stalls (0 bytes) against CI/datacenter IPs
 fetch https://ftp.gnu.org/gnu/gmp/gmp-$GMP_VERSION.tar.xz g.txz
-( cd gmp-$GMP_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --prefix="$PREFIX" ${GMP_CFLAGS:+CFLAGS="$GMP_CFLAGS"} && make -j$j && make install )
+( cd gmp-$GMP_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --prefix="$PREFIX" $GMP_EXTRA && make -j$j && make install )
