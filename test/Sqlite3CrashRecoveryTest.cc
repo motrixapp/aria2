@@ -54,6 +54,20 @@
 #include <unistd.h>
 #include <vector>
 
+// Detect AddressSanitizer (GCC defines __SANITIZE_ADDRESS__; Clang exposes it via
+// __has_feature) so the deliberate crash-simulation leak below can be excluded
+// from LeakSanitizer, which — unlike the plain cppunit harness — does not
+// tolerate leaks and would otherwise fail the suite.
+#if defined(__SANITIZE_ADDRESS__)
+#  include <sanitizer/lsan_interface.h>
+#  define ARIA2_TEST_HAS_ASAN 1
+#elif defined(__has_feature)
+#  if __has_feature(address_sanitizer)
+#    include <sanitizer/lsan_interface.h>
+#    define ARIA2_TEST_HAS_ASAN 1
+#  endif
+#endif
+
 #include <sqlite3.h>
 
 #include "a2functional.h"
@@ -252,8 +266,15 @@ void Sqlite3CrashRecoveryTest::testLeakedHandleWalRecovery()
     // Abandon the unique_ptr: the destructor never runs, so the sqlite3
     // handle is not closed and the WAL is left for the next open to recover.
     // This deliberately leaks one Sqlite3PersistenceStore instance per test
-    // invocation; cppunit's single-shot harness tolerates the leak.
-    (void)store.release();
+    // invocation; cppunit's single-shot harness tolerates the leak. Under
+    // AddressSanitizer, tell LeakSanitizer to treat the store (and everything
+    // reachable from it — the sqlite3 handle and its internal allocations) as
+    // an intentional, ignored root so ASan-enabled CI does not report it.
+    auto* leaked = store.release();
+#ifdef ARIA2_TEST_HAS_ASAN
+    __lsan_ignore_object(leaked);
+#endif
+    (void)leaked;
   }
 
   {
