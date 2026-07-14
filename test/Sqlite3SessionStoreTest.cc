@@ -321,7 +321,7 @@ void Sqlite3SessionStoreTest::testUpsertTaskInsertsThenUpdates()
         reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
     CPPUNIT_ASSERT_EQUAL(std::string("paused"),
                          std::string(state ? state : ""));
-    CPPUNIT_ASSERT_EQUAL(createdAt, sqlite3_column_int64(stmt, 3));
+    CPPUNIT_ASSERT_EQUAL(createdAt, static_cast<int64_t>(sqlite3_column_int64(stmt, 3)));
     sqlite3_finalize(stmt);
   }
 }
