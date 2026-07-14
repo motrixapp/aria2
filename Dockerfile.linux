@@ -24,6 +24,10 @@ RUN set -eu; \
       rm -f /tmp/toolchain.tgz; \
     done; \
     [ "$ok" = 1 ] || { echo "musl toolchain download failed from all mirrors" >&2; exit 1; }
+# The vendored toolchain ships libtool archives (*.la) whose libdir points at a
+# nonexistent build-time path (/<triple>/lib); libtool follows it when resolving
+# -latomic for aria2's link and errors. Drop them so -l resolves to the .a/.so.
+RUN find /opt -name '*.la' -delete
 ENV PATH=/opt/${TRIPLE}-cross/bin:$PATH
 ENV CC=${TRIPLE}-gcc CXX=${TRIPLE}-g++ \
     AR=${TRIPLE}-ar RANLIB=${TRIPLE}-ranlib STRIP=${TRIPLE}-strip
