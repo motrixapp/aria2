@@ -96,6 +96,7 @@ jobs:
     needs: version
     runs-on: ubuntu-22.04
     strategy:
+      fail-fast: false
       matrix:
         include:
         - { triple: x86_64-linux-musl,  asset_arch: x64 }
