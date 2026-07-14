@@ -11,6 +11,7 @@ ENV CC=${TRIPLE}-gcc CXX=${TRIPLE}-g++ \
     AR=${TRIPLE}-ar RANLIB=${TRIPLE}-ranlib STRIP=${TRIPLE}-strip
 ENV PREFIX=/usr/local/${TRIPLE}
 # Static deps: zlib, c-ares, expat, sqlite3, openssl, libssh2, libgmp
+COPY scripts/ci/deps.env /deps.env
 COPY scripts/ci/build-linux-deps.sh /build-linux-deps.sh
 RUN sh /build-linux-deps.sh "${TRIPLE}"
 COPY . /aria2
