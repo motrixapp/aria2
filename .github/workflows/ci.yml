@@ -100,6 +100,20 @@ jobs:
     - name: Build aria2
       run: |
         make -j"$(nproc 2> /dev/null || sysctl -n hw.ncpu)" check
+    - name: Show test-suite.log on failure
+      if: failure()
+      run: |
+        echo "===== test/test-suite.log ====="
+        cat test/test-suite.log || echo "(no test/test-suite.log produced)"
+    - name: Upload test logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-logs-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.crypto }}-${{ matrix.bittorrent }}
+        path: |
+          test/test-suite.log
+          test/*.log
+        if-no-files-found: ignore
 
   ci-required:
     needs: build

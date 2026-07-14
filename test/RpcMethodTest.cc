@@ -2155,8 +2155,12 @@ void RpcMethodTest::testRequeueViaSourceUri()
   e_->getRequestGroupMan()->setRepository(repo.get());
 
   // DR with no file URIs (serialized='') and no info_hash, so priorities
-  // 1, 4, 5 are skipped. metadata_uri will be set to a magnet link via a
-  // direct SQL UPDATE after insert to exercise priority 3.
+  // 1, 4, 5 are skipped. metadata_uri will be set to a remote metalink
+  // (.meta4) URL via a direct SQL UPDATE after insert to exercise priority 3.
+  // A metalink URL (rather than a magnet) keeps this test independent of
+  // BitTorrent: priority 3 also matches ^https?://.*\.(torrent|metalink|meta4)$,
+  // whereas magnet: is only recognized when ENABLE_BITTORRENT is compiled in
+  // (so the magnet form failed the --disable-bittorrent CI build).
   auto dr = std::make_shared<DownloadResult>();
   dr->gid = GroupId::create();
   dr->result = error_code::FINISHED;
@@ -2172,7 +2176,7 @@ void RpcMethodTest::testRequeueViaSourceUri()
   a2_gid_t historicalGid = dr->gid->getNumericId();
   dr.reset();
 
-  // Patch metadata_uri to a magnet link directly in the DB.
+  // Patch metadata_uri to a remote metalink URL directly in the DB.
   {
     sqlite3* db = e_->getSqlite3Store()->raw();
     std::string gidHex = GroupId::toHex(historicalGid);
@@ -2182,10 +2186,9 @@ void RpcMethodTest::testRequeueViaSourceUri()
     CPPUNIT_ASSERT_EQUAL(
         SQLITE_OK,
         sqlite3_prepare_v2(db, updSql, -1, &updStmt, nullptr));
-    std::string magnet =
-        "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567";
-    sqlite3_bind_text(updStmt, 1, magnet.data(),
-                      static_cast<int>(magnet.size()), SQLITE_STATIC);
+    std::string metadataUri = "https://example.org/foo.meta4";
+    sqlite3_bind_text(updStmt, 1, metadataUri.data(),
+                      static_cast<int>(metadataUri.size()), SQLITE_STATIC);
     sqlite3_bind_text(updStmt, 2, gidHex.data(),
                       static_cast<int>(gidHex.size()), SQLITE_STATIC);
     CPPUNIT_ASSERT_EQUAL(SQLITE_DONE, sqlite3_step(updStmt));
