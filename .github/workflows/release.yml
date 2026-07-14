@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   version:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
@@ -32,9 +32,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - { arch: arm64,  asset_arch: arm64, runner: macos-14 }
-        # macos-13 (Intel) runners are deprecated/unavailable; macos-26-intel is
-        # the current free standard Intel x86_64 runner (macOS 26 Tahoe).
+        - { arch: arm64,  asset_arch: arm64, runner: macos-26 }
+        # Both macOS arches build on macOS 26 (Tahoe): macos-26 (arm64) and
+        # macos-26-intel (x64). macos-13/14 are deprecated; macos-latest points
+        # to macos-26 as of mid-2026. The shipped binary's minimum OS is pinned
+        # to 11.0 by -mmacosx-version-min in scripts/build-static-osx.sh, so the
+        # runner OS version does not affect the deployment target.
         - { arch: x86_64, asset_arch: x64,   runner: macos-26-intel }
     runs-on: ${{ matrix.runner }}
     steps:
@@ -67,7 +70,7 @@ jobs:
 
   windows:
     needs: version
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         include:
@@ -97,7 +100,7 @@ jobs:
 
   linux:
     needs: version
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -130,7 +133,7 @@ jobs:
 
   android:
     needs: version
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v6
     - name: Inject version into configure.ac
@@ -155,7 +158,7 @@ jobs:
   publish:
     needs: [macos, windows, linux, android]
     if: github.event_name == 'push'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/download-artifact@v4
       with: { path: dist, merge-multiple: true }
