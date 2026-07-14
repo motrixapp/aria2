@@ -4,8 +4,30 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     autoconf automake autopoint libtool pkg-config git curl ca-certificates \
     make xz-utils dpkg-dev && rm -rf /var/lib/apt/lists/*
-# musl cross toolchain
-RUN curl -L https://musl.cc/${TRIPLE}-cross.tgz | tar xz -C /opt
+# musl cross toolchain. musl.cc (and its more.musl.cc mirror) are unreachable
+# from GitHub Actions runners, so pull from our own vendored copy on the repo's
+# "musl-toolchains" release first (reliable from Actions), keeping musl.cc as a
+# best-effort fallback. Fetch to a file with retries and a stalled-transfer
+# abort, and extract only after a clean download.
+RUN set -eu; \
+    ok=0; \
+    for url in \
+      "https://github.com/motrixapp/aria2/releases/download/musl-toolchains/${TRIPLE}-cross.tgz" \
+      "https://musl.cc/${TRIPLE}-cross.tgz" \
+      "https://more.musl.cc/11/x86_64-linux-musl/${TRIPLE}-cross.tgz"; do \
+      echo "Fetching musl toolchain: $url"; \
+      if curl -fL --retry 5 --retry-delay 3 --retry-all-errors --retry-connrefused \
+           --connect-timeout 30 --speed-limit 1 --speed-time 30 \
+           -o /tmp/toolchain.tgz "$url" && tar xzf /tmp/toolchain.tgz -C /opt; then \
+        ok=1; rm -f /tmp/toolchain.tgz; break; \
+      fi; \
+      rm -f /tmp/toolchain.tgz; \
+    done; \
+    [ "$ok" = 1 ] || { echo "musl toolchain download failed from all mirrors" >&2; exit 1; }
+# The vendored toolchain ships libtool archives (*.la) whose libdir points at a
+# nonexistent build-time path (/<triple>/lib); libtool follows it when resolving
+# -latomic for aria2's link and errors. Drop them so -l resolves to the .a/.so.
+RUN find /opt -name '*.la' -delete
 ENV PATH=/opt/${TRIPLE}-cross/bin:$PATH
 ENV CC=${TRIPLE}-gcc CXX=${TRIPLE}-g++ \
     AR=${TRIPLE}-ar RANLIB=${TRIPLE}-ranlib STRIP=${TRIPLE}-strip
@@ -16,7 +38,11 @@ COPY scripts/ci/build-linux-deps.sh /build-linux-deps.sh
 RUN sh /build-linux-deps.sh "${TRIPLE}"
 COPY . /aria2
 WORKDIR /aria2
-RUN autoreconf -fi && ./configure \
+# 32-bit arm resolves 64-bit atomics (openssl threads_pthread.c: __atomic_*_8)
+# via libatomic, not compiler intrinsics; link it on arm for aria2's final link.
+RUN set -eu; \
+    case "${TRIPLE}" in arm*) ATOMIC=-latomic ;; *) ATOMIC= ;; esac; \
+    autoreconf -fi && ./configure \
       --host=${TRIPLE} \
       --enable-static --disable-shared --disable-nls \
       --with-openssl --without-gnutls --without-appletls \
@@ -24,7 +50,7 @@ RUN autoreconf -fi && ./configure \
       --with-libssh2 --with-libgmp --without-libxml2 \
       CFLAGS="-Os -I$PREFIX/include" CXXFLAGS="-Os -I$PREFIX/include" \
       ARIA2_STATIC=yes \
-      LDFLAGS="-L$PREFIX/lib" \
+      LDFLAGS="-L$PREFIX/lib $ATOMIC" \
       PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig" \
       PKG_CONFIG="pkg-config --static" && \
     make -j"$(nproc)" && ${TRIPLE}-strip src/aria2c

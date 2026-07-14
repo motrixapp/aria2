@@ -31,13 +31,19 @@ RUN apt-get update && \
 
 COPY scripts/ci/deps.env /deps.env
 
+# fetch(): -f fails on HTTP errors (so a 404 errors here instead of saving an
+# error page that tar chokes on later); --retry + --speed-time abort/retry a
+# stalled transfer. gmp is taken from the GNU mirror because gmplib.org stalls
+# (0 bytes) against CI/datacenter IPs.
 RUN . /deps.env && \
-    curl -L -O https://gmplib.org/download/gmp/gmp-$GMP_VERSION.tar.xz && \
-    curl -L -O https://github.com/libexpat/libexpat/releases/download/R_2_7_5/expat-$EXPAT_VERSION.tar.bz2 && \
-    curl -L -O https://www.sqlite.org/$SQLITE_YEAR/sqlite-$SQLITE_VERSION.tar.gz && \
-    curl -L -O https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/zlib-$ZLIB_VERSION.tar.gz && \
-    curl -L -O https://github.com/c-ares/c-ares/releases/download/v$CARES_VERSION/c-ares-$CARES_VERSION.tar.gz && \
-    curl -L -O https://libssh2.org/download/libssh2-$LIBSSH2_VERSION.tar.bz2
+    fetch() { curl -fL --retry 5 --retry-delay 3 --retry-all-errors --retry-connrefused \
+                --connect-timeout 30 --speed-limit 1 --speed-time 30 -O "$1"; } && \
+    fetch https://ftp.gnu.org/gnu/gmp/gmp-$GMP_VERSION.tar.xz && \
+    fetch https://github.com/libexpat/libexpat/releases/download/R_2_7_5/expat-$EXPAT_VERSION.tar.bz2 && \
+    fetch https://www.sqlite.org/$SQLITE_YEAR/sqlite-$SQLITE_VERSION.tar.gz && \
+    fetch https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/zlib-$ZLIB_VERSION.tar.gz && \
+    fetch https://github.com/c-ares/c-ares/releases/download/v$CARES_VERSION/c-ares-$CARES_VERSION.tar.gz && \
+    fetch https://libssh2.org/download/libssh2-$LIBSSH2_VERSION.tar.bz2
 
 RUN . /deps.env && tar xf gmp-$GMP_VERSION.tar.xz && \
     cd gmp-$GMP_VERSION && \

@@ -3,11 +3,32 @@
 set -eu
 TRIPLE="$1"
 j="$(nproc)"
+# 32-bit arm has no native 8-byte atomics; openssl's threads_pthread.c references
+# __atomic_*_8, which armv7 resolves via libatomic (linked by libssh2's examples,
+# and later by aria2). 64-bit targets resolve them as intrinsics.
+case "$TRIPLE" in
+  arm*)
+    ATOMIC_LIB=-latomic
+    # GMP selects ARMv6 mpn asm (umaal) for armv7l, but this toolchain assembles
+    # below armv6 by default; passing -march to fix that instead breaks GMP's
+    # own compiler probe ("could not find a working compiler"). Disable GMP's
+    # assembly and use the portable C mpn — fast enough for aria2's occasional
+    # bignum use, and it sidesteps the whole arm-asm arch-mismatch class.
+    GMP_EXTRA=--disable-assembly
+    ;;
+  *)
+    ATOMIC_LIB=
+    GMP_EXTRA=
+    ;;
+esac
 # Shared dependency versions (see scripts/ci/deps.env). dirname "$0" is / in the
 # Dockerfile.linux container, where deps.env is COPY'd to /deps.env.
 . "$(dirname "$0")/deps.env"
 mkdir -p /src && cd /src
-fetch() { curl -fSL --retry 3 --retry-delay 2 --retry-connrefused -o "$2" "$1"; tar xf "$2"; }
+# --speed-limit 1 --speed-time 30 aborts a transfer stalled below 1 B/s for 30s
+# (e.g. gmplib.org accepting the connection then sending 0 bytes) so --retry can
+# re-attempt instead of hanging until the job timeout.
+fetch() { curl -fSL --retry 5 --retry-delay 3 --retry-connrefused --retry-all-errors --connect-timeout 30 --speed-limit 1 --speed-time 30 -o "$2" "$1"; tar xf "$2"; }
 # zlib
 fetch https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/zlib-$ZLIB_VERSION.tar.gz z.tgz
 ( cd zlib-$ZLIB_VERSION && CHOST="$TRIPLE" ./configure --static --prefix="$PREFIX" && make -j$j && make install )
@@ -37,7 +58,7 @@ esac
 ( cd openssl-$OPENSSL_VERSION && ./Configure no-shared no-module no-tests --prefix="$PREFIX" --libdir=lib "$ossl_target" && make -j$j && make install_sw )
 # libssh2
 fetch https://github.com/libssh2/libssh2/releases/download/libssh2-$LIBSSH2_VERSION/libssh2-$LIBSSH2_VERSION.tar.gz h.tgz
-( cd libssh2-$LIBSSH2_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --with-crypto=openssl --with-libssl-prefix="$PREFIX" --prefix="$PREFIX" && make -j$j && make install )
-# gmp
-fetch https://gmplib.org/download/gmp/gmp-$GMP_VERSION.tar.xz g.txz
-( cd gmp-$GMP_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --prefix="$PREFIX" && make -j$j && make install )
+( cd libssh2-$LIBSSH2_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --with-crypto=openssl --with-libssl-prefix="$PREFIX" --prefix="$PREFIX" LIBS="$ATOMIC_LIB" && make -j$j && make install )
+# gmp — from the GNU mirror; gmplib.org stalls (0 bytes) against CI/datacenter IPs
+fetch https://ftp.gnu.org/gnu/gmp/gmp-$GMP_VERSION.tar.xz g.txz
+( cd gmp-$GMP_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --prefix="$PREFIX" $GMP_EXTRA && make -j$j && make install )
