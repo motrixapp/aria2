@@ -284,9 +284,17 @@ public:
   // Removes all download results.
   void purgeDownloadResult();
 
-  // Removes download result of given gid. Returns true if download
-  // result was removed. Otherwise returns false.
-  bool removeDownloadResult(a2_gid_t gid);
+  // Outcome of removeDownloadResult. A boolean cannot carry the
+  // distinction that matters to RPC clients: REMOVED means at least one
+  // store held the result and every persistent delete succeeded;
+  // NOT_FOUND means no store held it (confirmed absent everywhere);
+  // FAILED means a persistent delete threw — the durable row may still
+  // exist, so callers must NOT report the gid as absent.
+  enum class RemoveResult { REMOVED, NOT_FOUND, FAILED };
+
+  // Removes download result of given gid from the in-memory window and,
+  // when sqlite3 persistence is active, from the durable stores.
+  RemoveResult removeDownloadResult(a2_gid_t gid);
 
   void addDownloadResult(const std::shared_ptr<DownloadResult>& downloadResult);
 
