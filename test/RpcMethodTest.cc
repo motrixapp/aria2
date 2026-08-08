@@ -109,6 +109,8 @@ class RpcMethodTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testRequeueViaSerializedText);
   CPPUNIT_TEST(testRequeueFailsWhenNothingAvailable);
   CPPUNIT_TEST(testRequeueViaSourceUri);
+  CPPUNIT_TEST(testRemoveDownloadResultPurgesHistoricalGid);
+  CPPUNIT_TEST(testRemoveDownloadResultAbsentGidReportsNotFound);
 #endif // HAVE_SQLITE3
   CPPUNIT_TEST_SUITE_END();
 
@@ -194,6 +196,8 @@ public:
   void testRequeueViaSerializedText();
   void testRequeueFailsWhenNothingAvailable();
   void testRequeueViaSourceUri();
+  void testRemoveDownloadResultPurgesHistoricalGid();
+  void testRemoveDownloadResultAbsentGidReportsNotFound();
 #endif // HAVE_SQLITE3
 };
 
@@ -2211,6 +2215,100 @@ void RpcMethodTest::testRequeueViaSourceUri()
   CPPUNIT_ASSERT_EQUAL(
       static_cast<size_t>(1),
       e_->getRequestGroupMan()->getReservedGroups().size());
+
+  e_->getRequestGroupMan()->setRepository(nullptr);
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+}
+#endif // HAVE_SQLITE3
+
+#ifdef HAVE_SQLITE3
+void RpcMethodTest::testRemoveDownloadResultPurgesHistoricalGid()
+{
+  std::string dbPath =
+      std::string(A2_TEST_OUT_DIR) + "/remove_result_historical.db";
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+
+  auto store = make_unique<Sqlite3PersistenceStore>(dbPath);
+  store->open();
+  e_->setSqlite3Store(std::move(store));
+  auto repo = make_unique<Sqlite3DownloadResultRepository>(
+      e_->getSqlite3Store());
+  e_->getRequestGroupMan()->setRepository(repo.get());
+
+  // A DR whose GroupId slot has been released models history evicted from
+  // the in-memory window (--max-download-result FIFO): the row lives only
+  // in the sqlite3 repository, not in the live GID registry.
+  auto dr = std::make_shared<DownloadResult>();
+  dr->gid = GroupId::create();
+  dr->result = error_code::FINISHED;
+  dr->option = option_;
+  auto fe = std::make_shared<FileEntry>("/tmp/remove_hist.bin", 1024, 0);
+  fe->addUri("http://example.com/remove_hist.bin");
+  dr->fileEntries.push_back(std::move(fe));
+  dr->totalLength = 1024;
+  dr->completedLength = 1024;
+  dr->numPieces = static_cast<size_t>(1);
+  dr->pieceLength = 1024;
+
+  repo->insert(dr);
+  a2_gid_t historicalGid = dr->gid->getNumericId();
+  dr.reset();
+
+  RemoveDownloadResultRpcMethod m;
+  auto req = createReq(RemoveDownloadResultRpcMethod::getMethodName());
+  req.params->append(GroupId::toHex(historicalGid));
+  auto res = m.execute(std::move(req), e_.get());
+
+  // A client that receives OK erases its own record; the durable row must
+  // actually be gone or aria2 reloads it as an orphan on the next restart.
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+  CPPUNIT_ASSERT(!repo->fetchByGid(historicalGid));
+
+  e_->getRequestGroupMan()->setRepository(nullptr);
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+}
+#endif // HAVE_SQLITE3
+
+#ifdef HAVE_SQLITE3
+void RpcMethodTest::testRemoveDownloadResultAbsentGidReportsNotFound()
+{
+  std::string dbPath =
+      std::string(A2_TEST_OUT_DIR) + "/remove_result_absent.db";
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+
+  auto store = make_unique<Sqlite3PersistenceStore>(dbPath);
+  store->open();
+  e_->setSqlite3Store(std::move(store));
+  auto repo = make_unique<Sqlite3DownloadResultRepository>(
+      e_->getSqlite3Store());
+  e_->getRequestGroupMan()->setRepository(repo.get());
+
+  // A gid absent from BOTH the live registry and the repository must keep
+  // reporting "is not found": clients treat that exact wording as the
+  // idempotent already-absent outcome (motrix-turbo isNotFoundError).
+  a2_gid_t absentGid;
+  {
+    auto slot = GroupId::create();
+    absentGid = slot->getNumericId();
+  }
+
+  RemoveDownloadResultRpcMethod m;
+  auto req = createReq(RemoveDownloadResultRpcMethod::getMethodName());
+  req.params->append(GroupId::toHex(absentGid));
+  auto res = m.execute(std::move(req), e_.get());
+
+  CPPUNIT_ASSERT_EQUAL(1, res.code);
+  const std::string fault =
+      getString(downcast<Dict>(res.param), "faultString");
+  CPPUNIT_ASSERT(fault.find("is not found") != std::string::npos);
 
   e_->getRequestGroupMan()->setRepository(nullptr);
   std::remove(dbPath.c_str());

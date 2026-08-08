@@ -1217,8 +1217,39 @@ RemoveDownloadResultRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
 {
   const String* gidParam = checkRequiredParam<String>(req, 0);
 
-  a2_gid_t gid = str2Gid(gidParam);
+  // str2Gid resolves through the live GroupId registry, which no longer
+  // holds GIDs evicted from the in-memory results window
+  // (--max-download-result FIFO).  With sqlite3 persistence those rows
+  // still exist durably; reporting "is not found" for them makes clients
+  // erase their own records while the engine row survives and resurrects
+  // as an orphan on the next restart.  Decode the full hex directly (same
+  // pattern as RequeueDownloadResultRpcMethod) so removeDownloadResult can
+  // still purge the persistent stores.
+  a2_gid_t gid;
+  bool live = true;
+  switch (GroupId::expandUnique(gid, gidParam->s().c_str())) {
+  case GroupId::ERR_NOT_UNIQUE:
+    throw DL_ABORT_EX(fmt("GID %s is not unique", gidParam->s().c_str()));
+  case GroupId::ERR_INVALID:
+    throw DL_ABORT_EX(fmt("Invalid GID %s", gidParam->s().c_str()));
+  case GroupId::ERR_NOT_FOUND:
+    if (GroupId::toNumericId(gid, gidParam->s().c_str()) != 0) {
+      // An abbreviated prefix cannot address history once the full GID
+      // left the registry; keep upstream's wording for that case.
+      throw DL_ABORT_EX(fmt("GID %s is not found", gidParam->s().c_str()));
+    }
+    live = false;
+    break;
+  default:
+    break;
+  }
+
   if (!e->getRequestGroupMan()->removeDownloadResult(gid)) {
+    if (!live) {
+      // Absent from the registry AND every persistent store: keep the
+      // "is not found" contract clients rely on for idempotent removal.
+      throw DL_ABORT_EX(fmt("GID %s is not found", gidParam->s().c_str()));
+    }
     throw DL_ABORT_EX(fmt("Could not remove download result of GID#%s",
                           GroupId::toHex(gid).c_str()));
   }
