@@ -985,17 +985,26 @@ RequestGroupMan::findDownloadResult(a2_gid_t gid) const
   return downloadResults_.get(gid);
 }
 
-bool RequestGroupMan::removeDownloadResult(a2_gid_t gid)
+RequestGroupMan::RemoveResult
+RequestGroupMan::removeDownloadResult(a2_gid_t gid)
 {
   bool memSuccess = downloadResults_.remove(gid);
 #ifdef HAVE_SQLITE3
   bool dbSuccess = false;
+  bool storeFailed = false;
   if (repo_) {
     try {
       dbSuccess = repo_->deleteByGid(gid);
     }
-    catch (RecoverableException&) {
-      dbSuccess = false;
+    catch (RecoverableException& ex) {
+      // SQLITE_BUSY, an I/O error, or a full disk: the history row may
+      // still exist. This must NOT collapse into NOT_FOUND — a client
+      // told the gid is absent deletes its own record while the durable
+      // row survives and resurrects as an orphan on the next restart.
+      A2_LOG_ERROR_EX(
+          "sqlite3-persistence: deleteByGid in removeDownloadResult failed",
+          ex);
+      storeFailed = true;
     }
   }
   // removeDownloadResult is the explicit "purge this gid" RPC. With
@@ -1019,14 +1028,22 @@ bool RequestGroupMan::removeDownloadResult(a2_gid_t gid)
       sessionStore_->deleteTask(GroupId::toHex(gid));
     }
     catch (RecoverableException& ex) {
+      // Same reasoning as deleteByGid above: a surviving task row reloads
+      // as a phantom on restart, so the removal must surface as FAILED
+      // and be retried, not absorbed into a success or NOT_FOUND.
       A2_LOG_ERROR_EX(
           "sqlite3-persistence: deleteTask in removeDownloadResult failed",
           ex);
+      storeFailed = true;
     }
   }
-  return memSuccess || dbSuccess;
+  if (storeFailed) {
+    return RemoveResult::FAILED;
+  }
+  return memSuccess || dbSuccess ? RemoveResult::REMOVED
+                                 : RemoveResult::NOT_FOUND;
 #else
-  return memSuccess;
+  return memSuccess ? RemoveResult::REMOVED : RemoveResult::NOT_FOUND;
 #endif
 }
 

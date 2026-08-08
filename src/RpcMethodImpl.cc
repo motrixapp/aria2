@@ -1244,7 +1244,14 @@ RemoveDownloadResultRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
     break;
   }
 
-  if (!e->getRequestGroupMan()->removeDownloadResult(gid)) {
+  switch (e->getRequestGroupMan()->removeDownloadResult(gid)) {
+  case RequestGroupMan::RemoveResult::FAILED:
+    // Deliberately NOT the "is not found" wording: clients treat that as
+    // the idempotent already-absent outcome and would erase their own
+    // record while the durable row survives the failed delete.
+    throw DL_ABORT_EX(fmt("Failed to remove download result of GID#%s",
+                          GroupId::toHex(gid).c_str()));
+  case RequestGroupMan::RemoveResult::NOT_FOUND:
     if (!live) {
       // Absent from the registry AND every persistent store: keep the
       // "is not found" contract clients rely on for idempotent removal.
@@ -1252,6 +1259,8 @@ RemoveDownloadResultRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
     }
     throw DL_ABORT_EX(fmt("Could not remove download result of GID#%s",
                           GroupId::toHex(gid).c_str()));
+  case RequestGroupMan::RemoveResult::REMOVED:
+    break;
   }
   return createOKResponse();
 }

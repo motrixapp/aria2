@@ -69,7 +69,7 @@ struct SearchFilter {
 class Sqlite3DownloadResultRepository {
 public:
   explicit Sqlite3DownloadResultRepository(Sqlite3PersistenceStore* store);
-  ~Sqlite3DownloadResultRepository();
+  virtual ~Sqlite3DownloadResultRepository();
 
   Sqlite3DownloadResultRepository(const Sqlite3DownloadResultRepository&) =
       delete;
@@ -86,7 +86,10 @@ public:
   // Deletes the row in download_history matching gid.  CASCADE removes
   // child rows in download_history_files and download_history_file_uris.
   // Returns true if at least one row was deleted.
-  bool deleteByGid(a2_gid_t gid);
+  // virtual: fault-injection seam — RpcMethodTest simulates SQLITE_BUSY /
+  // I/O failures to pin the FAILED-vs-NOT_FOUND distinction in
+  // RequestGroupMan::removeDownloadResult.
+  virtual bool deleteByGid(a2_gid_t gid);
 
   // Deletes all rows from download_history (and cascaded children).
   // Also discards any pending writes.

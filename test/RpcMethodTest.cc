@@ -32,6 +32,7 @@
 #  include <sqlite3.h>
 #  include "DownloadResult.h"
 #  include "GroupId.h"
+#  include "DlAbortEx.h"
 #  include "Sqlite3DownloadResultRepository.h"
 #  include "Sqlite3PersistenceStore.h"
 #  include "Sqlite3SessionStore.h"
@@ -111,6 +112,7 @@ class RpcMethodTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testRequeueViaSourceUri);
   CPPUNIT_TEST(testRemoveDownloadResultPurgesHistoricalGid);
   CPPUNIT_TEST(testRemoveDownloadResultAbsentGidReportsNotFound);
+  CPPUNIT_TEST(testRemoveDownloadResultStoreFailureIsNotNotFound);
 #endif // HAVE_SQLITE3
   CPPUNIT_TEST_SUITE_END();
 
@@ -198,6 +200,7 @@ public:
   void testRequeueViaSourceUri();
   void testRemoveDownloadResultPurgesHistoricalGid();
   void testRemoveDownloadResultAbsentGidReportsNotFound();
+  void testRemoveDownloadResultStoreFailureIsNotNotFound();
 #endif // HAVE_SQLITE3
 };
 
@@ -2309,6 +2312,73 @@ void RpcMethodTest::testRemoveDownloadResultAbsentGidReportsNotFound()
   const std::string fault =
       getString(downcast<Dict>(res.param), "faultString");
   CPPUNIT_ASSERT(fault.find("is not found") != std::string::npos);
+
+  e_->getRequestGroupMan()->setRepository(nullptr);
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+}
+#endif // HAVE_SQLITE3
+
+#ifdef HAVE_SQLITE3
+namespace {
+// Fault-injection double: deleteByGid raising models SQLITE_BUSY, an I/O
+// error, or a full disk while the history row still exists durably.
+class ThrowingDeleteRepository : public Sqlite3DownloadResultRepository {
+public:
+  using Sqlite3DownloadResultRepository::Sqlite3DownloadResultRepository;
+  bool deleteByGid(a2_gid_t) override
+  {
+    throw DL_ABORT_EX("sqlite3-persistence: simulated SQLITE_BUSY");
+  }
+};
+} // namespace
+
+void RpcMethodTest::testRemoveDownloadResultStoreFailureIsNotNotFound()
+{
+  std::string dbPath =
+      std::string(A2_TEST_OUT_DIR) + "/remove_result_store_failure.db";
+  std::remove(dbPath.c_str());
+  std::remove((dbPath + "-wal").c_str());
+  std::remove((dbPath + "-shm").c_str());
+
+  auto store = make_unique<Sqlite3PersistenceStore>(dbPath);
+  store->open();
+  e_->setSqlite3Store(std::move(store));
+  auto repo = make_unique<ThrowingDeleteRepository>(e_->getSqlite3Store());
+  e_->getRequestGroupMan()->setRepository(repo.get());
+
+  auto dr = std::make_shared<DownloadResult>();
+  dr->gid = GroupId::create();
+  dr->result = error_code::FINISHED;
+  dr->option = option_;
+  auto fe = std::make_shared<FileEntry>("/tmp/store_failure.bin", 1024, 0);
+  fe->addUri("http://example.com/store_failure.bin");
+  dr->fileEntries.push_back(std::move(fe));
+  dr->totalLength = 1024;
+  dr->completedLength = 1024;
+  dr->numPieces = static_cast<size_t>(1);
+  dr->pieceLength = 1024;
+
+  repo->insert(dr);
+  a2_gid_t historicalGid = dr->gid->getNumericId();
+  dr.reset();
+
+  RemoveDownloadResultRpcMethod m;
+  auto req = createReq(RemoveDownloadResultRpcMethod::getMethodName());
+  req.params->append(GroupId::toHex(historicalGid));
+  auto res = m.execute(std::move(req), e_.get());
+
+  // A failed persistent delete must surface as an error that clients do
+  // NOT read as "already absent": the row still exists, and an "is not
+  // found" here makes them erase their own record while the engine row
+  // survives and resurrects as an orphan on the next restart.
+  CPPUNIT_ASSERT_EQUAL(1, res.code);
+  const std::string fault =
+      getString(downcast<Dict>(res.param), "faultString");
+  CPPUNIT_ASSERT(fault.find("is not found") == std::string::npos);
+  CPPUNIT_ASSERT(!!Sqlite3DownloadResultRepository(e_->getSqlite3Store())
+                       .fetchByGid(historicalGid));
 
   e_->getRequestGroupMan()->setRepository(nullptr);
   std::remove(dbPath.c_str());
