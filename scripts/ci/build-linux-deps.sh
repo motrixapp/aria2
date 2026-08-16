@@ -33,18 +33,18 @@ mkdir -p /src && cd /src
 # --speed-limit 1 --speed-time 30 aborts a transfer stalled below 1 B/s for 30s
 # (e.g. gmplib.org accepting the connection then sending 0 bytes) so --retry can
 # re-attempt instead of hanging until the job timeout.
-fetch() { curl -fSL --retry 5 --retry-delay 3 --retry-connrefused --retry-all-errors --connect-timeout 30 --speed-limit 1 --speed-time 30 -o "$2" "$1"; tar xf "$2"; }
+fetch() { curl -fSL --retry 5 --retry-delay 3 --retry-connrefused --retry-all-errors --connect-timeout 30 --speed-limit 1 --speed-time 30 -o "$2" "$1"; echo "$3  $2" | sha256sum -c -; tar xf "$2"; }
 # zlib
-fetch https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/zlib-$ZLIB_VERSION.tar.gz z.tgz
+fetch https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/zlib-$ZLIB_VERSION.tar.gz z.tgz "$ZLIB_SHA256"
 ( cd zlib-$ZLIB_VERSION && CHOST="$TRIPLE" ./configure --static --prefix="$PREFIX" && make -j$j && make install )
 # c-ares
-fetch https://github.com/c-ares/c-ares/releases/download/v$CARES_VERSION/c-ares-$CARES_VERSION.tar.gz c.tgz
+fetch https://github.com/c-ares/c-ares/releases/download/v$CARES_VERSION/c-ares-$CARES_VERSION.tar.gz c.tgz "$CARES_SHA256"
 ( cd c-ares-$CARES_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --prefix="$PREFIX" && make -j$j && make install )
 # expat
-fetch https://github.com/libexpat/libexpat/releases/download/$EXPAT_TAG/expat-$EXPAT_VERSION.tar.bz2 e.tbz
+fetch https://github.com/libexpat/libexpat/releases/download/$EXPAT_TAG/expat-$EXPAT_VERSION.tar.bz2 e.tbz "$EXPAT_SHA256"
 ( cd expat-$EXPAT_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --without-docbook --prefix="$PREFIX" && make -j$j && make install )
 # sqlite3
-fetch https://www.sqlite.org/$SQLITE_YEAR/sqlite-$SQLITE_VERSION.tar.gz s.tgz
+fetch https://www.sqlite.org/$SQLITE_YEAR/sqlite-$SQLITE_VERSION.tar.gz s.tgz "$SQLITE_SHA256"
 ( cd sqlite-$SQLITE_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --prefix="$PREFIX" && make -j$j && make install )
 # openssl 3.5 LTS. no-module compiles the legacy provider INTO libcrypto.a as a
 # built-in, so aria2's OSSL_PROVIDER_load(NULL,"legacy") (RC4, for BitTorrent MSE)
@@ -53,7 +53,7 @@ fetch https://www.sqlite.org/$SQLITE_YEAR/sqlite-$SQLITE_VERSION.tar.gz s.tgz
 # Per-arch target: generic64 assumes a 64-bit word (breaks 32-bit armv7l).
 # CC/AR/RANLIB come from the Dockerfile ENV (already ${TRIPLE}-*); do NOT also pass
 # --cross-compile-prefix or openssl doubles it (…-musl-…-musl-gcc: not found).
-fetch https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz o.tgz
+fetch https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz o.tgz "$OPENSSL_SHA256"
 case "$TRIPLE" in
   x86_64-*)  ossl_target=linux-x86_64 ;;
   aarch64-*) ossl_target=linux-aarch64 ;;
@@ -62,8 +62,8 @@ case "$TRIPLE" in
 esac
 ( cd openssl-$OPENSSL_VERSION && ./Configure no-shared no-module no-tests --prefix="$PREFIX" --libdir=lib "$ossl_target" && make -j$j && make install_sw )
 # libssh2
-fetch https://github.com/libssh2/libssh2/releases/download/libssh2-$LIBSSH2_VERSION/libssh2-$LIBSSH2_VERSION.tar.gz h.tgz
+fetch https://github.com/libssh2/libssh2/releases/download/libssh2-$LIBSSH2_VERSION/libssh2-$LIBSSH2_VERSION.tar.gz h.tgz "$LIBSSH2_SHA256"
 ( cd libssh2-$LIBSSH2_VERSION && for p in "$PATCH_DIR"/libssh2-$LIBSSH2_VERSION-*.patch; do patch -p1 < "$p"; done && ./configure --host="$TRIPLE" --enable-static --disable-shared --with-crypto=openssl --with-libssl-prefix="$PREFIX" --prefix="$PREFIX" LIBS="$ATOMIC_LIB" && make -j$j && make install )
 # gmp — from the GNU mirror; gmplib.org stalls (0 bytes) against CI/datacenter IPs
-fetch https://ftp.gnu.org/gnu/gmp/gmp-$GMP_VERSION.tar.xz g.txz
+fetch https://ftp.gnu.org/gnu/gmp/gmp-$GMP_VERSION.tar.xz g.txz "$GMP_SHA256"
 ( cd gmp-$GMP_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --prefix="$PREFIX" $GMP_EXTRA && make -j$j && make install )

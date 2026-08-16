@@ -109,7 +109,7 @@ include $(SRCDIR)/scripts/ci/deps.env
 
 # Dependency versions
 zlib_version = $(ZLIB_VERSION)
-zlib_hash = bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16
+zlib_hash = $(ZLIB_SHA256)
 zlib_url = https://zlib.net/zlib-$(zlib_version).tar.gz
 
 expat_version = $(EXPAT_VERSION)
@@ -119,20 +119,20 @@ expat_cflags=$(CFLAGS) $(LTO_FLAGS)
 expat_ldflags=$(CFLAGS) $(LTO_FLAGS)
 
 cares_version = $(CARES_VERSION)
-cares_hash = c222b6d681096f9444d2c4863d2c1174019e27cacca0a4a5c114d36dd7d7bf78
+cares_hash = $(CARES_SHA256)
 cares_url = https://github.com/c-ares/c-ares/releases/download/v$(cares_version)/c-ares-$(cares_version).tar.gz
 cares_confflags = "--enable-optimize=$(OPTFLAGS)"
 cares_cflags=$(CFLAGS) $(LTO_FLAGS)
 cares_ldflags=$(CFLAGS) $(LTO_FLAGS)
 
 sqlite_version = $(SQLITE_VERSION)
-sqlite_hash = 0e9483900e92cd5de8fd48d16bf9200145a61f7fd5be542a5ac81d8a9516eb9c
+sqlite_hash = $(SQLITE_SHA256)
 sqlite_url = https://www.sqlite.org/$(SQLITE_YEAR)/sqlite-$(sqlite_version).tar.gz
 sqlite_cflags=$(CFLAGS) $(LTO_FLAGS)
 sqlite_ldflags=$(CFLAGS) $(LTO_FLAGS)
 
 gmp_version = $(GMP_VERSION)
-gmp_hash = a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898
+gmp_hash = $(GMP_SHA256)
 gmp_url = https://ftp.gnu.org/gnu/gmp/gmp-$(gmp_version).tar.xz
 gmp_confflags = --disable-cxx --enable-assembly --with-pic --enable-fat
 gmp_cflags=$(CFLAGS)
@@ -153,7 +153,7 @@ libgcrypt_cflags=$(PLATFORMFLAGS)
 libgcrypt_cxxflags=$(PLATFORMFLAGS)
 
 libssh2_version = $(LIBSSH2_VERSION)
-libssh2_hash = d9ec76cbe34db98eec3539fe2c899d26b0c837cb3eb466a56b0f109cabf658f7
+libssh2_hash = $(LIBSSH2_SHA256)
 libssh2_url = https://www.libssh2.org/download/libssh2-$(libssh2_version).tar.gz
 libssh2_cflags=$(CFLAGS) $(LTO_FLAGS)
 libssh2_cxxflags=$(CXXFLAGS) $(LTO_FLAGS)
