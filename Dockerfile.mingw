@@ -30,20 +30,23 @@ RUN apt-get update && \
         python3-docutils
 
 COPY scripts/ci/deps.env /deps.env
+COPY patches /patches
 
 # fetch(): -f fails on HTTP errors (so a 404 errors here instead of saving an
 # error page that tar chokes on later); --retry + --speed-time abort/retry a
-# stalled transfer. gmp is taken from the GNU mirror because gmplib.org stalls
-# (0 bytes) against CI/datacenter IPs.
+# stalled transfer; the trailing sha256sum -c fails the build on any digest
+# mismatch (digests pinned in deps.env). gmp is taken from the GNU mirror
+# because gmplib.org stalls (0 bytes) against CI/datacenter IPs.
 RUN . /deps.env && \
     fetch() { curl -fL --retry 5 --retry-delay 3 --retry-all-errors --retry-connrefused \
-                --connect-timeout 30 --speed-limit 1 --speed-time 30 -O "$1"; } && \
-    fetch https://ftp.gnu.org/gnu/gmp/gmp-$GMP_VERSION.tar.xz && \
-    fetch https://github.com/libexpat/libexpat/releases/download/R_2_7_5/expat-$EXPAT_VERSION.tar.bz2 && \
-    fetch https://www.sqlite.org/$SQLITE_YEAR/sqlite-$SQLITE_VERSION.tar.gz && \
-    fetch https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/zlib-$ZLIB_VERSION.tar.gz && \
-    fetch https://github.com/c-ares/c-ares/releases/download/v$CARES_VERSION/c-ares-$CARES_VERSION.tar.gz && \
-    fetch https://libssh2.org/download/libssh2-$LIBSSH2_VERSION.tar.bz2
+                --connect-timeout 30 --speed-limit 1 --speed-time 30 -O "$1" && \
+              echo "$2  ${1##*/}" | sha256sum -c -; } && \
+    fetch https://ftp.gnu.org/gnu/gmp/gmp-$GMP_VERSION.tar.xz "$GMP_SHA256" && \
+    fetch https://github.com/libexpat/libexpat/releases/download/$EXPAT_TAG/expat-$EXPAT_VERSION.tar.bz2 "$EXPAT_SHA256" && \
+    fetch https://www.sqlite.org/$SQLITE_YEAR/sqlite-$SQLITE_VERSION.tar.gz "$SQLITE_SHA256" && \
+    fetch https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/zlib-$ZLIB_VERSION.tar.gz "$ZLIB_SHA256" && \
+    fetch https://github.com/c-ares/c-ares/releases/download/v$CARES_VERSION/c-ares-$CARES_VERSION.tar.gz "$CARES_SHA256" && \
+    fetch https://libssh2.org/download/libssh2-$LIBSSH2_VERSION.tar.bz2 "$LIBSSH2_BZ2_SHA256"
 
 RUN . /deps.env && tar xf gmp-$GMP_VERSION.tar.xz && \
     cd gmp-$GMP_VERSION && \
@@ -104,6 +107,7 @@ RUN . /deps.env && tar xf c-ares-$CARES_VERSION.tar.gz && \
 
 RUN . /deps.env && tar xf libssh2-$LIBSSH2_VERSION.tar.bz2 && \
     cd libssh2-$LIBSSH2_VERSION && \
+    for p in /patches/libssh2-$LIBSSH2_VERSION-*.patch; do patch -p1 < "$p" || exit 1; done && \
     ./configure \
         --disable-shared \
         --enable-static \

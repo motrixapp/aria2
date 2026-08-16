@@ -17,7 +17,7 @@ WORKDIR /root
 RUN apt-get update && \
     apt-get install -y  --no-install-recommends \
       unzip bzip2 make binutils autoconf automake autotools-dev autopoint \
-      libtool pkg-config git dpkg-dev curl ca-certificates \
+      libtool pkg-config git dpkg-dev curl ca-certificates patch \
       python3-docutils && \
     rm -rf /var/cache/apt/*
 
@@ -42,6 +42,7 @@ RUN curl -L -O https://dl.google.com/android/repository/android-ndk-$NDK_VERSION
 
 # Shared dependency versions (single source of truth; see scripts/ci/deps.env).
 COPY scripts/ci/deps.env /deps.env
+COPY patches /patches
 
 # Build OpenSSL 3.5 LTS (migrated from EOL 1.1.1w). no-module compiles the legacy
 # provider INTO libcrypto.a so aria2's OSSL_PROVIDER_load(NULL,"legacy") (RC4 for
@@ -52,7 +53,8 @@ COPY scripts/ci/deps.env /deps.env
 # ANDROID_NDK_HOME is ignored -> "$ANDROID_NDK_ROOT is not defined"). Export both.
 WORKDIR /root/build
 RUN . /deps.env && \
-    curl -L -O https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz && \
+    curl -fL -O https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz && \
+    echo "$OPENSSL_SHA256  openssl-$OPENSSL_VERSION.tar.gz" | sha256sum -c - && \
     tar xf openssl-$OPENSSL_VERSION.tar.gz && \
     cd openssl-$OPENSSL_VERSION && \
     export ANDROID_NDK_ROOT=$NDK ANDROID_NDK_HOME=$NDK PATH=$TOOLCHAIN/bin:$PATH && \
@@ -62,7 +64,8 @@ RUN . /deps.env && \
 # Build libexpat
 WORKDIR /root/build
 RUN . /deps.env && \
-    curl -L -O https://github.com/libexpat/libexpat/releases/download/R_2_7_5/expat-$EXPAT_VERSION.tar.bz2 && \
+    curl -fL -O https://github.com/libexpat/libexpat/releases/download/$EXPAT_TAG/expat-$EXPAT_VERSION.tar.bz2 && \
+    echo "$EXPAT_SHA256  expat-$EXPAT_VERSION.tar.bz2" | sha256sum -c - && \
     tar xf expat-$EXPAT_VERSION.tar.bz2 && \
     cd expat-$EXPAT_VERSION && \
     ./configure \
@@ -75,7 +78,8 @@ RUN . /deps.env && \
 # Build zlib
 WORKDIR /root/build
 RUN . /deps.env && \
-    curl -L -O https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/zlib-$ZLIB_VERSION.tar.gz && \
+    curl -fL -O https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/zlib-$ZLIB_VERSION.tar.gz && \
+    echo "$ZLIB_SHA256  zlib-$ZLIB_VERSION.tar.gz" | sha256sum -c - && \
     tar xf zlib-$ZLIB_VERSION.tar.gz && \
     cd zlib-$ZLIB_VERSION && \
     ./configure \
@@ -88,7 +92,8 @@ RUN . /deps.env && \
 # Build c-ares
 WORKDIR /root/build
 RUN . /deps.env && \
-    curl -L -O https://github.com/c-ares/c-ares/releases/download/v$CARES_VERSION/c-ares-$CARES_VERSION.tar.gz && \
+    curl -fL -O https://github.com/c-ares/c-ares/releases/download/v$CARES_VERSION/c-ares-$CARES_VERSION.tar.gz && \
+    echo "$CARES_SHA256  c-ares-$CARES_VERSION.tar.gz" | sha256sum -c - && \
     tar xf c-ares-$CARES_VERSION.tar.gz && \
     cd c-ares-$CARES_VERSION && \
     ./configure \
@@ -101,9 +106,11 @@ RUN . /deps.env && \
 # Build libssh2
 WORKDIR /root/build
 RUN . /deps.env && \
-    curl -L -O https://libssh2.org/download/libssh2-$LIBSSH2_VERSION.tar.bz2 && \
+    curl -fL -O https://libssh2.org/download/libssh2-$LIBSSH2_VERSION.tar.bz2 && \
+    echo "$LIBSSH2_BZ2_SHA256  libssh2-$LIBSSH2_VERSION.tar.bz2" | sha256sum -c - && \
     tar xf libssh2-$LIBSSH2_VERSION.tar.bz2 && \
     cd libssh2-$LIBSSH2_VERSION && \
+    for p in /patches/libssh2-$LIBSSH2_VERSION-*.patch; do patch -p1 < "$p" || exit 1; done && \
     ./configure \
       --host=$HOST \
       --build=`dpkg-architecture -qDEB_BUILD_GNU_TYPE` \
