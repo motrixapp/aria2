@@ -159,6 +159,11 @@ libssh2_cflags=$(CFLAGS) $(LTO_FLAGS)
 libssh2_cxxflags=$(CXXFLAGS) $(LTO_FLAGS)
 libssh2_ldflags=$(CFLAGS) $(LTO_FLAGS)
 libssh2_confflags = --with-pic --with-crypto=libgcrypt --with-libgcrypt-prefix=$(PWD)/arch
+# Upstream CVE fixes not yet in any tagged libssh2 release (see patches/);
+# drop these when LIBSSH2_VERSION moves past 1.11.1.
+libssh2_patches = \
+	$(SRCDIR)/patches/libssh2-$(libssh2_version)-cve-2026-55199.patch \
+	$(SRCDIR)/patches/libssh2-$(libssh2_version)-cve-2026-55200.patch
 libssh2_nocheck = yes
 # sqlite 3.51.x autoconf amalgamation drops the `check` target in Makefile.in,
 # so skip per-dep `make check`. TCL-based tests need a separate harness.
@@ -296,6 +301,9 @@ deps::
 %.stamp: %.tar.gz %.check
 	tar xf $<
 	mv $(basename $@)-$($(basename $@)_version) $(basename $@)
+	for p in $($(basename $@)_patches); do \
+		patch -d $(basename $@) -p1 < $$p || exit 1; \
+	done
 	touch $@
 
 # gmp uses .tar.xz

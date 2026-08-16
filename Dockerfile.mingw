@@ -30,6 +30,7 @@ RUN apt-get update && \
         python3-docutils
 
 COPY scripts/ci/deps.env /deps.env
+COPY patches /patches
 
 # fetch(): -f fails on HTTP errors (so a 404 errors here instead of saving an
 # error page that tar chokes on later); --retry + --speed-time abort/retry a
@@ -104,6 +105,7 @@ RUN . /deps.env && tar xf c-ares-$CARES_VERSION.tar.gz && \
 
 RUN . /deps.env && tar xf libssh2-$LIBSSH2_VERSION.tar.bz2 && \
     cd libssh2-$LIBSSH2_VERSION && \
+    for p in /patches/libssh2-$LIBSSH2_VERSION-*.patch; do patch -p1 < "$p" || exit 1; done && \
     ./configure \
         --disable-shared \
         --enable-static \

@@ -17,7 +17,7 @@ WORKDIR /root
 RUN apt-get update && \
     apt-get install -y  --no-install-recommends \
       unzip bzip2 make binutils autoconf automake autotools-dev autopoint \
-      libtool pkg-config git dpkg-dev curl ca-certificates \
+      libtool pkg-config git dpkg-dev curl ca-certificates patch \
       python3-docutils && \
     rm -rf /var/cache/apt/*
 
@@ -42,6 +42,7 @@ RUN curl -L -O https://dl.google.com/android/repository/android-ndk-$NDK_VERSION
 
 # Shared dependency versions (single source of truth; see scripts/ci/deps.env).
 COPY scripts/ci/deps.env /deps.env
+COPY patches /patches
 
 # Build OpenSSL 3.5 LTS (migrated from EOL 1.1.1w). no-module compiles the legacy
 # provider INTO libcrypto.a so aria2's OSSL_PROVIDER_load(NULL,"legacy") (RC4 for
@@ -104,6 +105,7 @@ RUN . /deps.env && \
     curl -L -O https://libssh2.org/download/libssh2-$LIBSSH2_VERSION.tar.bz2 && \
     tar xf libssh2-$LIBSSH2_VERSION.tar.bz2 && \
     cd libssh2-$LIBSSH2_VERSION && \
+    for p in /patches/libssh2-$LIBSSH2_VERSION-*.patch; do patch -p1 < "$p" || exit 1; done && \
     ./configure \
       --host=$HOST \
       --build=`dpkg-architecture -qDEB_BUILD_GNU_TYPE` \

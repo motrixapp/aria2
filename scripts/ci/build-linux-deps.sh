@@ -24,6 +24,11 @@ esac
 # Shared dependency versions (see scripts/ci/deps.env). dirname "$0" is / in the
 # Dockerfile.linux container, where deps.env is COPY'd to /deps.env.
 . "$(dirname "$0")/deps.env"
+# Vendored security patches. From a repo checkout scripts/ci/../.. is the repo
+# root; in the Dockerfile.linux container the directory is COPY'd to /patches.
+# Resolved to an absolute path up front because the script cd's around later.
+PATCH_DIR="$(cd "$(dirname "$0")/../.." && pwd)/patches"
+[ -d "$PATCH_DIR" ] || PATCH_DIR="/patches"
 mkdir -p /src && cd /src
 # --speed-limit 1 --speed-time 30 aborts a transfer stalled below 1 B/s for 30s
 # (e.g. gmplib.org accepting the connection then sending 0 bytes) so --retry can
@@ -58,7 +63,7 @@ esac
 ( cd openssl-$OPENSSL_VERSION && ./Configure no-shared no-module no-tests --prefix="$PREFIX" --libdir=lib "$ossl_target" && make -j$j && make install_sw )
 # libssh2
 fetch https://github.com/libssh2/libssh2/releases/download/libssh2-$LIBSSH2_VERSION/libssh2-$LIBSSH2_VERSION.tar.gz h.tgz
-( cd libssh2-$LIBSSH2_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --with-crypto=openssl --with-libssl-prefix="$PREFIX" --prefix="$PREFIX" LIBS="$ATOMIC_LIB" && make -j$j && make install )
+( cd libssh2-$LIBSSH2_VERSION && for p in "$PATCH_DIR"/libssh2-$LIBSSH2_VERSION-*.patch; do patch -p1 < "$p"; done && ./configure --host="$TRIPLE" --enable-static --disable-shared --with-crypto=openssl --with-libssl-prefix="$PREFIX" --prefix="$PREFIX" LIBS="$ATOMIC_LIB" && make -j$j && make install )
 # gmp — from the GNU mirror; gmplib.org stalls (0 bytes) against CI/datacenter IPs
 fetch https://ftp.gnu.org/gnu/gmp/gmp-$GMP_VERSION.tar.xz g.txz
 ( cd gmp-$GMP_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --prefix="$PREFIX" $GMP_EXTRA && make -j$j && make install )
