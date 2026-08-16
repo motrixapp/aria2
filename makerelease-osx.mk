@@ -110,7 +110,9 @@ include $(SRCDIR)/scripts/ci/deps.env
 # Dependency versions
 zlib_version = $(ZLIB_VERSION)
 zlib_hash = $(ZLIB_SHA256)
-zlib_url = https://zlib.net/zlib-$(zlib_version).tar.gz
+# GitHub asset, same as the other lanes: zlib.net only hosts the current
+# release, so its URL breaks for us the moment upstream publishes a new one.
+zlib_url = https://github.com/madler/zlib/releases/download/v$(zlib_version)/zlib-$(zlib_version).tar.gz
 
 expat_version = $(EXPAT_VERSION)
 expat_hash = 22920a86c83f32300b11463635b71f11137a917975af297725e55525027d4e50
