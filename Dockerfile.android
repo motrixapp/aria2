@@ -63,7 +63,7 @@ RUN . /deps.env && \
 # Build libexpat
 WORKDIR /root/build
 RUN . /deps.env && \
-    curl -L -O https://github.com/libexpat/libexpat/releases/download/R_2_7_5/expat-$EXPAT_VERSION.tar.bz2 && \
+    curl -L -O https://github.com/libexpat/libexpat/releases/download/$EXPAT_TAG/expat-$EXPAT_VERSION.tar.bz2 && \
     tar xf expat-$EXPAT_VERSION.tar.bz2 && \
     cd expat-$EXPAT_VERSION && \
     ./configure \

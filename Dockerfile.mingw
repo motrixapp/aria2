@@ -40,7 +40,7 @@ RUN . /deps.env && \
     fetch() { curl -fL --retry 5 --retry-delay 3 --retry-all-errors --retry-connrefused \
                 --connect-timeout 30 --speed-limit 1 --speed-time 30 -O "$1"; } && \
     fetch https://ftp.gnu.org/gnu/gmp/gmp-$GMP_VERSION.tar.xz && \
-    fetch https://github.com/libexpat/libexpat/releases/download/R_2_7_5/expat-$EXPAT_VERSION.tar.bz2 && \
+    fetch https://github.com/libexpat/libexpat/releases/download/$EXPAT_TAG/expat-$EXPAT_VERSION.tar.bz2 && \
     fetch https://www.sqlite.org/$SQLITE_YEAR/sqlite-$SQLITE_VERSION.tar.gz && \
     fetch https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/zlib-$ZLIB_VERSION.tar.gz && \
     fetch https://github.com/c-ares/c-ares/releases/download/v$CARES_VERSION/c-ares-$CARES_VERSION.tar.gz && \

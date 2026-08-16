@@ -41,7 +41,7 @@ fetch https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/zlib-$ZLIB
 fetch https://github.com/c-ares/c-ares/releases/download/v$CARES_VERSION/c-ares-$CARES_VERSION.tar.gz c.tgz
 ( cd c-ares-$CARES_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --prefix="$PREFIX" && make -j$j && make install )
 # expat
-fetch https://github.com/libexpat/libexpat/releases/download/R_2_7_5/expat-$EXPAT_VERSION.tar.bz2 e.tbz
+fetch https://github.com/libexpat/libexpat/releases/download/$EXPAT_TAG/expat-$EXPAT_VERSION.tar.bz2 e.tbz
 ( cd expat-$EXPAT_VERSION && ./configure --host="$TRIPLE" --enable-static --disable-shared --without-docbook --prefix="$PREFIX" && make -j$j && make install )
 # sqlite3
 fetch https://www.sqlite.org/$SQLITE_YEAR/sqlite-$SQLITE_VERSION.tar.gz s.tgz

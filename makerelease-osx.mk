@@ -113,20 +113,20 @@ zlib_hash = bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16
 zlib_url = https://zlib.net/zlib-$(zlib_version).tar.gz
 
 expat_version = $(EXPAT_VERSION)
-expat_hash = 9931f9860d18e6cf72d183eb8f309bfb96196c00e1d40caa978e95bc9aa978b6
-expat_url = https://github.com/libexpat/libexpat/releases/download/R_2_7_5/expat-$(expat_version).tar.gz
+expat_hash = 22920a86c83f32300b11463635b71f11137a917975af297725e55525027d4e50
+expat_url = https://github.com/libexpat/libexpat/releases/download/$(EXPAT_TAG)/expat-$(expat_version).tar.gz
 expat_cflags=$(CFLAGS) $(LTO_FLAGS)
 expat_ldflags=$(CFLAGS) $(LTO_FLAGS)
 
 cares_version = $(CARES_VERSION)
-cares_hash = 912dd7cc3b3e8a79c52fd7fb9c0f4ecf0aaa73e45efda880266a2d6e26b84ef5
+cares_hash = c222b6d681096f9444d2c4863d2c1174019e27cacca0a4a5c114d36dd7d7bf78
 cares_url = https://github.com/c-ares/c-ares/releases/download/v$(cares_version)/c-ares-$(cares_version).tar.gz
 cares_confflags = "--enable-optimize=$(OPTFLAGS)"
 cares_cflags=$(CFLAGS) $(LTO_FLAGS)
 cares_ldflags=$(CFLAGS) $(LTO_FLAGS)
 
 sqlite_version = $(SQLITE_VERSION)
-sqlite_hash = 81f5be397049b0cae1b167f2225af7646fc0f82e4a9b3c48c9ea3a533e21d77a
+sqlite_hash = 0e9483900e92cd5de8fd48d16bf9200145a61f7fd5be542a5ac81d8a9516eb9c
 sqlite_url = https://www.sqlite.org/$(SQLITE_YEAR)/sqlite-$(sqlite_version).tar.gz
 sqlite_cflags=$(CFLAGS) $(LTO_FLAGS)
 sqlite_ldflags=$(CFLAGS) $(LTO_FLAGS)
@@ -139,7 +139,7 @@ gmp_cflags=$(CFLAGS)
 gmp_cxxflags=$(CXXFLAGS)
 
 libgpgerror_version = $(LIBGPGERROR_VERSION)
-libgpgerror_hash = a19bc5087fd97026d93cb4b45d51638d1a25202a5e1fbc3905799f424cfa6134
+libgpgerror_hash = 7a85413f2bc354f4f8aa832b718af122e48965e9e0eb9012ee659c13c6385c93
 libgpgerror_url = https://gnupg.org/ftp/gcrypt/libgpg-error/libgpg-error-$(libgpgerror_version).tar.bz2
 libgpgerror_cflags=$(CFLAGS) $(LTO_FLAGS)
 libgpgerror_ldflags=$(CFLAGS) $(LTO_FLAGS)
@@ -165,7 +165,7 @@ libssh2_patches = \
 	$(SRCDIR)/patches/libssh2-$(libssh2_version)-cve-2026-55199.patch \
 	$(SRCDIR)/patches/libssh2-$(libssh2_version)-cve-2026-55200.patch
 libssh2_nocheck = yes
-# sqlite 3.51.x autoconf amalgamation drops the `check` target in Makefile.in,
+# sqlite 3.51+ autoconf amalgamation drops the `check` target in Makefile.in,
 # so skip per-dep `make check`. TCL-based tests need a separate harness.
 sqlite_nocheck = yes
 
