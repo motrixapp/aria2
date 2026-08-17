@@ -53,6 +53,17 @@ std::string getImmutableSqliteUri(const std::string& filename)
 {
   return "file:" + util::percentEncode(filename) + "?mode=ro&immutable=1";
 }
+
+// sqlite3_open_v2() opens lazily: it returns SQLITE_OK for a WAL-mode
+// database opened read-only even though the first read will fail with
+// SQLITE_CANTOPEN because the -wal/-shm sidecars cannot be created. Probe
+// with a trivial read so the immutable-URI fallback below is actually
+// reached instead of surfacing as a parse() error later (upstream #1280).
+bool canReadDatabase(sqlite3* db)
+{
+  return db && sqlite3_exec(db, "SELECT 1 FROM sqlite_master LIMIT 1;",
+                            nullptr, nullptr, nullptr) == SQLITE_OK;
+}
 } // namespace
 
 Sqlite3CookieParser::Sqlite3CookieParser(const std::string& filename)
@@ -61,12 +72,15 @@ Sqlite3CookieParser::Sqlite3CookieParser(const std::string& filename)
   int ret;
 #ifdef HAVE_SQLITE3_OPEN_V2
   ret = sqlite3_open_v2(filename.c_str(), &db_, SQLITE_OPEN_READONLY, nullptr);
-  if (SQLITE_OK != ret) {
+  if (SQLITE_OK != ret || !canReadDatabase(db_)) {
     sqlite3_close(db_);
     db_ = nullptr;
     auto uri = getImmutableSqliteUri(filename);
     ret = sqlite3_open_v2(uri.c_str(), &db_,
                           SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nullptr);
+    if (SQLITE_OK == ret && !canReadDatabase(db_)) {
+      ret = SQLITE_CANTOPEN;
+    }
   }
 #else  // !HAVE_SQLITE3_OPEN_V2
   if (!File(filename).isFile()) {
