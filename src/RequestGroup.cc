@@ -220,7 +220,8 @@ void RequestGroup::closeFile()
 // TODO The function name is not intuitive at all.. it does not convey
 // that this function open file.
 std::unique_ptr<CheckIntegrityEntry>
-RequestGroup::createCheckIntegrityEntry(DownloadEngine* e)
+RequestGroup::createCheckIntegrityEntry(DownloadEngine* e,
+                                        FileOpenMode fileOpenMode)
 {
   auto infoFile =
       makeBtProgressInfoFile(downloadContext_, pieceStorage_, option_.get(), e);
@@ -229,11 +230,11 @@ RequestGroup::createCheckIntegrityEntry(DownloadEngine* e)
       downloadContext_->isPieceHashVerificationAvailable()) {
     // When checking piece hash, we don't care file is downloaded and
     // infoFile exists.
-    loadAndOpenFile(infoFile);
+    loadAndOpenFile(infoFile, fileOpenMode);
     return make_unique<StreamCheckIntegrityEntry>(this);
   }
 
-  if (isPreLocalFileCheckEnabled() &&
+  if (fileOpenMode == DEFAULT_FILE_OPEN && isPreLocalFileCheckEnabled() &&
       (infoFile->exists() || (File(getFirstFilePath()).exists() &&
                               option_->getAsBool(PREF_CONTINUE)))) {
     // If infoFile exists or -c option is given, we need to check
@@ -257,7 +258,11 @@ RequestGroup::createCheckIntegrityEntry(DownloadEngine* e)
     return make_unique<StreamCheckIntegrityEntry>(this);
   }
 
-  if (downloadFinishedByFileLength() &&
+  // A same-length body must not be treated as "already complete" when the
+  // remote resource changed under a conditional request: the local bytes
+  // are stale, so skip the finished-by-length short-circuit and fall
+  // through to a from-scratch download (upstream #2280).
+  if (fileOpenMode == DEFAULT_FILE_OPEN && downloadFinishedByFileLength() &&
       downloadContext_->isChecksumVerificationAvailable()) {
     pieceStorage_->markAllPiecesDone();
     loadAndOpenFile(infoFile);
@@ -266,7 +271,7 @@ RequestGroup::createCheckIntegrityEntry(DownloadEngine* e)
     return std::move(tempEntry);
   }
 
-  loadAndOpenFile(infoFile);
+  loadAndOpenFile(infoFile, fileOpenMode);
   return make_unique<StreamCheckIntegrityEntry>(this);
 }
 
@@ -731,11 +736,25 @@ void RequestGroup::removeDefunctControlFile(
 }
 
 void RequestGroup::loadAndOpenFile(
-    const std::shared_ptr<BtProgressInfoFile>& progressInfoFile)
+    const std::shared_ptr<BtProgressInfoFile>& progressInfoFile,
+    FileOpenMode fileOpenMode)
 {
   try {
     if (!isPreLocalFileCheckEnabled()) {
       pieceStorage_->getDiskAdaptor()->initAndOpenFile();
+      return;
+    }
+    if (fileOpenMode == RESTART_FROM_SCRATCH) {
+      // A conditional request was answered with a fresh 200, so both the
+      // saved progress and the partially downloaded bytes are stale. Drop
+      // the control file and truncate the output (initAndOpenFile uses
+      // O_TRUNC and reallocates to the new total length) so the download
+      // starts from zero instead of resuming against outdated content.
+      if (progressInfoFile->exists()) {
+        progressInfoFile->removeFile();
+      }
+      pieceStorage_->getDiskAdaptor()->initAndOpenFile();
+      setProgressInfoFile(progressInfoFile);
       return;
     }
     removeDefunctControlFile(progressInfoFile);

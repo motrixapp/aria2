@@ -363,8 +363,13 @@ bool HttpResponseCommand::handleDefaultEncoding(
     return true;
   }
 
-  auto checkEntry =
-      getRequestGroup()->createCheckIntegrityEntry(getDownloadEngine());
+  // A conditional request that came back as a full 200 (rather than 304)
+  // means the remote resource changed, so any locally saved progress is
+  // stale and the file must be re-fetched from scratch (upstream #2280).
+  auto checkEntry = getRequestGroup()->createCheckIntegrityEntry(
+      getDownloadEngine(), httpResponse->getHttpRequest()->conditionalRequest()
+                               ? RequestGroup::RESTART_FROM_SCRATCH
+                               : RequestGroup::DEFAULT_FILE_OPEN);
   if (!checkEntry) {
     return true;
   }
