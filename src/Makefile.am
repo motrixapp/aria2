@@ -344,16 +344,6 @@ SRCS += \
 	WinTLSSession.cc WinTLSSession.h
 endif # HAVE_WINTLS
 
-if USE_INTERNAL_BIGNUM
-SRCS += \
-	bignum.h\
-	InternalDHKeyExchange.cc InternalDHKeyExchange.h
-endif
-
-if USE_INTERNAL_ARC4
-SRCS += InternalARC4Encryptor.cc InternalARC4Encryptor.h
-endif
-
 if USE_INTERNAL_MD
 SRCS += \
 	InternalMessageDigestImpl.cc\
@@ -613,6 +603,15 @@ SRCS += \
 	ValueBaseBencodeParser.h\
 	XORCloser.h\
 	ZeroBtMessage.cc ZeroBtMessage.h
+if USE_INTERNAL_BIGNUM
+SRCS += \
+	bignum.h\
+	InternalDHKeyExchange.cc InternalDHKeyExchange.h
+endif
+
+if USE_INTERNAL_ARC4
+SRCS += InternalARC4Encryptor.cc InternalARC4Encryptor.h
+endif
 endif # ENABLE_BITTORRENT
 
 if ENABLE_METALINK
@@ -760,4 +759,3 @@ endif # !ENABLE_LIBARIA2
 AM_CFLAGS = @EXTRACFLAGS@
 
 AM_CXXFLAGS = @WARNCXXFLAGS@ @CXX1XCXXFLAGS@ @EXTRACXXFLAGS@
-
