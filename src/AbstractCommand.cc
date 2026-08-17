@@ -372,6 +372,23 @@ bool AbstractCommand::execute()
 
     const int maxTries = getOption()->getAsInt(PREF_MAX_TRIES);
     bool isAbort = maxTries != 0 && req_->getTryCount() >= maxTries;
+    if (err.getErrorCode() == error_code::HTTP_SERVICE_UNAVAILABLE) {
+      // A 503 retry deliberately does not consume the permanent try budget
+      // (the request is re-pooled and its try count reset on wake, to keep
+      // parallelism after a transient outage). That leaves the loop
+      // unbounded, so a server that always answers 503 would retry forever.
+      // Bound it with an independent consecutive-503 counter, capped at
+      // max-tries (upstream #1839).
+      req_->incrementWakeCount();
+      if (maxTries != 0 && req_->getWakeCount() >= maxTries) {
+        isAbort = true;
+      }
+    }
+    else {
+      // A different outcome breaks the 503 streak; reset the counter so the
+      // cap only ever trips on *consecutive* service-unavailable responses.
+      req_->resetWakeCount();
+    }
     if (isAbort) {
       A2_LOG_INFO(fmt(MSG_MAX_TRY, getCuid(), req_->getTryCount()));
       A2_LOG_ERROR_EX(

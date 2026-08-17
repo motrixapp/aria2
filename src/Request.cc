@@ -63,7 +63,8 @@ Request::Request()
       removalRequested_(false),
       connectedPort_(0),
       wakeTime_(global::wallclock()),
-      resetTryCountAfterWake_(false)
+      resetTryCountAfterWake_(false),
+      wakeCount_(0)
 {
 }
 
