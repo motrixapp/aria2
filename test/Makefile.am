@@ -86,6 +86,7 @@ aria2c_SOURCES = AllTest.cc\
 	SegListTest.cc\
 	ParamedStringTest.cc\
 	RpcHelperTest.cc\
+	WinTLSProtocolsTest.cc\
 	AbstractCommandTest.cc\
 	SinkStreamFilterTest.cc\
 	WrDiskCacheTest.cc\

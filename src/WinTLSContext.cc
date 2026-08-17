@@ -38,6 +38,8 @@
 #include <cassert>
 #include <sstream>
 
+#include "WinTLSProtocols.h"
+
 #include "BufferedFile.h"
 #include "LogFactory.h"
 #include "Logger.h"
@@ -70,40 +72,47 @@ WinTLSContext::WinTLSContext(TLSSessionSide side, TLSVersion ver)
     : side_(side), store_(0)
 {
   memset(&credentials_, 0, sizeof(credentials_));
+  if (ver != TLS_PROTO_TLS11 && ver != TLS_PROTO_TLS12 &&
+      ver != TLS_PROTO_TLS13) {
+    assert(0);
+    abort();
+  }
 #if defined(SCH_CREDENTIALS_VERSION)
+  // Modern Schannel (SCH_CREDENTIALS): grbitDisabledProtocols is a
+  // black-list. winTLSDisabledProtocols() disables every protocol below
+  // the requested minimum; |ver| and above follow Schannel's defaults.
   memset(&tlsParams_, 0, sizeof(tlsParams_));
   credentials_.dwVersion = SCH_CREDENTIALS_VERSION;
   credentials_.cTlsParameters = 1;
   credentials_.pTlsParameters = &tlsParams_;
-  tlsParams_.grbitDisabledProtocols = 0;
+#  if !defined(SP_PROT_TLS1_3_CLIENT) || !defined(SP_PROT_TLS1_3_SERVER)
+  if (ver == TLS_PROTO_TLS13) {
+    throw DL_ABORT_EX("WinTLS backend does not support TLSv1.3");
+  }
+#  endif // !SP_PROT_TLS1_3
+  tlsParams_.grbitDisabledProtocols =
+      winTLSDisabledProtocols(side_ == TLS_CLIENT, ver);
 #else  // !SCH_CREDENTIALS_VERSION
+  // Legacy SCHANNEL_CRED: grbitEnabledProtocols is a white-list, so
+  // OR-accumulate the requested minimum and every higher version.
   credentials_.dwVersion = SCHANNEL_CRED_VERSION;
   credentials_.grbitEnabledProtocols = 0;
-#endif // !SCH_CREDENTIALS_VERSION
   if (side_ == TLS_CLIENT) {
     switch (ver) {
     case TLS_PROTO_TLS11:
-#if defined(SCH_CREDENTIALS_VERSION)
-      tlsParams_.grbitDisabledProtocols &= ~SP_PROT_TLS1_1_CLIENT;
-#else  // !SCH_CREDENTIALS_VERSION
       credentials_.grbitEnabledProtocols |= SP_PROT_TLS1_1_CLIENT;
-#endif // !SCH_CREDENTIALS_VERSION
     // fall through
     case TLS_PROTO_TLS12:
-#if defined(SCH_CREDENTIALS_VERSION)
-      tlsParams_.grbitDisabledProtocols &= ~SP_PROT_TLS1_2_CLIENT;
-#else  // !SCH_CREDENTIALS_VERSION
       credentials_.grbitEnabledProtocols |= SP_PROT_TLS1_2_CLIENT;
-#endif // !SCH_CREDENTIALS_VERSION
     // fall through
     case TLS_PROTO_TLS13:
-#if defined(SCH_CREDENTIALS_VERSION) && defined(SP_PROT_TLS1_3_CLIENT)
-      tlsParams_.grbitDisabledProtocols &= ~SP_PROT_TLS1_3_CLIENT;
-#elif defined(SP_PROT_TLS1_3_CLIENT)
+#  if defined(SP_PROT_TLS1_3_CLIENT)
       credentials_.grbitEnabledProtocols |= SP_PROT_TLS1_3_CLIENT;
-#else  // !SP_PROT_TLS1_3_CLIENT
-      throw DL_ABORT_EX("WinTLS backend does not support TLSv1.3");
-#endif // !SP_PROT_TLS1_3_CLIENT
+#  else  // !SP_PROT_TLS1_3_CLIENT
+      if (ver == TLS_PROTO_TLS13) {
+        throw DL_ABORT_EX("WinTLS backend does not support TLSv1.3");
+      }
+#  endif // !SP_PROT_TLS1_3_CLIENT
       break;
     default:
       assert(0);
@@ -113,33 +122,26 @@ WinTLSContext::WinTLSContext(TLSSessionSide side, TLSVersion ver)
   else {
     switch (ver) {
     case TLS_PROTO_TLS11:
-#if defined(SCH_CREDENTIALS_VERSION)
-      tlsParams_.grbitDisabledProtocols &= ~SP_PROT_TLS1_1_SERVER;
-#else  // !SCH_CREDENTIALS_VERSION
       credentials_.grbitEnabledProtocols |= SP_PROT_TLS1_1_SERVER;
-#endif // !SCH_CREDENTIALS_VERSION
     // fall through
     case TLS_PROTO_TLS12:
-#if defined(SCH_CREDENTIALS_VERSION)
-      tlsParams_.grbitDisabledProtocols &= ~SP_PROT_TLS1_2_SERVER;
-#else  // !SCH_CREDENTIALS_VERSION
       credentials_.grbitEnabledProtocols |= SP_PROT_TLS1_2_SERVER;
-#endif // !SCH_CREDENTIALS_VERSION
     // fall through
     case TLS_PROTO_TLS13:
-#if defined(SCH_CREDENTIALS_VERSION) && defined(SP_PROT_TLS1_3_SERVER)
-      tlsParams_.grbitDisabledProtocols &= ~SP_PROT_TLS1_3_SERVER;
-#elif defined(SP_PROT_TLS1_3_SERVER)
+#  if defined(SP_PROT_TLS1_3_SERVER)
       credentials_.grbitEnabledProtocols |= SP_PROT_TLS1_3_SERVER;
-#else  // !SP_PROT_TLS1_3_SERVER
-      throw DL_ABORT_EX("WinTLS backend does not support TLSv1.3");
-#endif // !SP_PROT_TLS1_3_SERVER
+#  else  // !SP_PROT_TLS1_3_SERVER
+      if (ver == TLS_PROTO_TLS13) {
+        throw DL_ABORT_EX("WinTLS backend does not support TLSv1.3");
+      }
+#  endif // !SP_PROT_TLS1_3_SERVER
       break;
     default:
       assert(0);
       abort();
     }
   }
+#endif // !SCH_CREDENTIALS_VERSION
 
   // Strong protocol versions: Use a minimum strength, which might be later
   // refined using SCH_USE_STRONG_CRYPTO in the flags.

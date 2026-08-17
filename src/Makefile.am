@@ -4,6 +4,7 @@ aria2c_SOURCES = main.cc
 SRCS =  \
 	a2algo.h\
 	a2functional.h\
+	WinTLSProtocols.h\
 	a2io.h\
 	a2iterator.h\
 	a2netcompat.h\
