@@ -47,18 +47,9 @@
 #include "message.h"
 #include "util.h"
 
-#ifndef SP_PROT_TLS1_1_CLIENT
-#  define SP_PROT_TLS1_1_CLIENT 0x00000200
-#endif
-#ifndef SP_PROT_TLS1_1_SERVER
-#  define SP_PROT_TLS1_1_SERVER 0x00000100
-#endif
-#ifndef SP_PROT_TLS1_2_CLIENT
-#  define SP_PROT_TLS1_2_CLIENT 0x00000800
-#endif
-#ifndef SP_PROT_TLS1_2_SERVER
-#  define SP_PROT_TLS1_2_SERVER 0x00000400
-#endif
+// The SP_PROT_TLS1_* protocol constants come from WinTLSProtocols.h (which
+// also serves the host-testable mask helper). Only SCH_USE_STRONG_CRYPTO,
+// which that header does not need, keeps a fallback here.
 #ifndef SCH_USE_STRONG_CRYPTO
 #  define SCH_USE_STRONG_CRYPTO 0x00400000
 #endif
@@ -143,11 +134,10 @@ WinTLSContext::WinTLSContext(TLSSessionSide side, TLSVersion ver)
   }
 #endif // !SCH_CREDENTIALS_VERSION
 
-  // Strong protocol versions: Use a minimum strength, which might be later
-  // refined using SCH_USE_STRONG_CRYPTO in the flags.
-#if defined(SCH_CREDENTIALS_VERSION)
-  credentials_.dwFlags |= SCH_USE_STRONG_CRYPTO;
-#else  // !SCH_CREDENTIALS_VERSION
+  // Request a minimum cipher strength on the legacy path; the modern path's
+  // SCH_USE_STRONG_CRYPTO flag is applied in setVerifyPeer() (which resets
+  // dwFlags), so both are established after setVerifyPeer() runs below.
+#if !defined(SCH_CREDENTIALS_VERSION)
   credentials_.dwMinimumCipherStrength = STRONG_CIPHER_BITS;
 #endif // !SCH_CREDENTIALS_VERSION
 
@@ -177,12 +167,16 @@ void WinTLSContext::setVerifyPeer(bool verify)
   cred_.reset();
 
   // Never automatically push any client or server certs. We'll do cert setup
-  // ourselves.
+  // ourselves.  This plain assignment resets dwFlags, so the strong-crypto
+  // flag the constructor requested must be re-applied below rather than lost
+  // (setVerifyPeer runs last in the constructor).
   credentials_.dwFlags = SCH_CRED_NO_DEFAULT_CREDS;
 
-#if !defined(SCH_CREDENTIALS_VERSION)
+#if defined(SCH_CREDENTIALS_VERSION)
+  credentials_.dwFlags |= SCH_USE_STRONG_CRYPTO;
+#else  // !SCH_CREDENTIALS_VERSION
   if (credentials_.dwMinimumCipherStrength > WEAK_CIPHER_BITS) {
-    // Enable strong crypto if we already set a minimum cipher streams.
+    // Enable strong crypto if we already set a minimum cipher strength.
     // This might actually require even stronger algorithms, which is a good
     // thing.
     credentials_.dwFlags |= SCH_USE_STRONG_CRYPTO;

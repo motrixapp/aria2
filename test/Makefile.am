@@ -79,7 +79,6 @@ aria2c_SOURCES = AllTest.cc\
 	ValueBaseJsonParserTest.cc\
 	RpcResponseTest.cc\
 	RpcMethodTest.cc\
-	WebSocketSessionManTest.cc\
 	HttpServerTest.cc\
 	BufferedFileTest.cc\
 	GeomStreamPieceSelectorTest.cc\
@@ -98,6 +97,13 @@ aria2c_SOURCES = AllTest.cc\
 if ENABLE_XML_RPC
 aria2c_SOURCES += XmlRpcRequestParserControllerTest.cc
 endif # ENABLE_XML_RPC
+
+if ENABLE_WEBSOCKET
+# WebSocketSession pulls in <wslay/wslay.h>, available only when websocket
+# support is configured; guarding this keeps `make check` building under
+# --disable-websocket.
+aria2c_SOURCES += WebSocketSessionManTest.cc
+endif # ENABLE_WEBSOCKET
 
 if HAVE_SOME_FALLOCATE
 aria2c_SOURCES += FallocFileAllocationIteratorTest.cc

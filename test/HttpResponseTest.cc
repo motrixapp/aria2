@@ -49,6 +49,7 @@ class HttpResponseTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testValidateResponse_bad_range);
   CPPUNIT_TEST(testValidateResponse_chunked);
   CPPUNIT_TEST(testValidateResponse_rejectsTransferEncodedRange);
+  CPPUNIT_TEST(testValidateResponse_allowsTransferEncoded206WithoutSegment);
   CPPUNIT_TEST(testValidateResponse_withIfModifiedSince);
   CPPUNIT_TEST(testProcessRedirect);
   CPPUNIT_TEST(testRetrieveCookie);
@@ -82,6 +83,7 @@ public:
   void testValidateResponse_bad_range();
   void testValidateResponse_chunked();
   void testValidateResponse_rejectsTransferEncodedRange();
+  void testValidateResponse_allowsTransferEncoded206WithoutSegment();
   void testValidateResponse_withIfModifiedSince();
   void testProcessRedirect();
   void testRetrieveCookie();
@@ -481,6 +483,28 @@ void HttpResponseTest::testValidateResponse_rejectsTransferEncodedRange()
   httpResponse.getHttpHeader()->put(HttpHeader::TRANSFER_ENCODING, "chunked");
 
   CPPUNIT_ASSERT_THROW(httpResponse.validateResponse(), Exception);
+}
+
+void HttpResponseTest::testValidateResponse_allowsTransferEncoded206WithoutSegment()
+{
+  // A segment-less initial request never sent a Range header, so a chunked
+  // 206 with no Content-Range must be accepted as an unknown-length
+  // download rather than rejected. Rejecting it (missing the getSegment()
+  // guard) regressed downloads that previously worked (upstream #886).
+  HttpResponse httpResponse;
+  httpResponse.setHttpHeader(make_unique<HttpHeader>());
+
+  auto httpRequest = make_unique<HttpRequest>();
+  auto fileEntry = std::make_shared<FileEntry>("file", 0, 0);
+  httpRequest->setFileEntry(fileEntry);
+  auto request = std::make_shared<Request>();
+  request->setUri("http://localhost/archives/aria2-1.0.0.tar.bz2");
+  httpRequest->setRequest(request);
+  httpResponse.setHttpRequest(std::move(httpRequest));
+  httpResponse.getHttpHeader()->setStatusCode(206);
+  httpResponse.getHttpHeader()->put(HttpHeader::TRANSFER_ENCODING, "chunked");
+
+  httpResponse.validateResponse();
 }
 
 void HttpResponseTest::testValidateResponse_withIfModifiedSince()

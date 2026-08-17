@@ -54,6 +54,12 @@ namespace {
 template <typename T>
 void checkLoopSize(std::vector<std::string>& res, T start, T end, int64_t step)
 {
+  // An empty prefix set (e.g. from an empty choice group "{}") expands to
+  // nothing regardless of the loop width, so there is no overflow to check
+  // and dividing by res.size() would be a division by zero.
+  if (res.empty()) {
+    return;
+  }
   auto n = (end - start) / step + 1;
   if (static_cast<uint64_t>(n) >
       std::numeric_limits<size_t>::max() / res.size()) {
@@ -157,7 +163,9 @@ InputIterator expandLoop(std::vector<std::string>& res, InputIterator first,
            i != eoi; ++i) {
         for (int64_t j = start; j <= end; j += step) {
           res2.push_back(*i);
-          res2.back() += fmt(format.c_str(), j);
+          // start/end are bounded to INT32_MAX above, so j fits in int32_t;
+          // the "%d"/"%0Nd" format expects int, not int64_t (would be UB).
+          res2.back() += fmt(format.c_str(), static_cast<int32_t>(j));
         }
       }
       res.swap(res2);

@@ -12,12 +12,14 @@ class ParamedStringTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testExpand);
   CPPUNIT_TEST(testExpandAcceptsWideNumericRangeValues);
   CPPUNIT_TEST(testExpandReportsNumericRangeOverflow);
+  CPPUNIT_TEST(testExpandEmptyChoiceThenLoopDoesNotCrash);
   CPPUNIT_TEST_SUITE_END();
 
 public:
   void testExpand();
   void testExpandAcceptsWideNumericRangeValues();
   void testExpandReportsNumericRangeOverflow();
+  void testExpandEmptyChoiceThenLoopDoesNotCrash();
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION(ParamedStringTest);
@@ -207,6 +209,18 @@ void ParamedStringTest::testExpand()
   CPPUNIT_ASSERT_EQUAL(std::string("http://us.mirror/image_cd000.iso"), res[2]);
   CPPUNIT_ASSERT_EQUAL(std::string("http://us.mirror/image_cd001.iso"), res[3]);
   res.clear();
+}
+
+void ParamedStringTest::testExpandEmptyChoiceThenLoopDoesNotCrash()
+{
+  // An empty choice group "{}" expands the prefix set to nothing; a loop
+  // that follows then reached checkLoopSize() with an empty res and divided
+  // by res.size() == 0 (SIGFPE), reachable from RPC aria2.addUri. The result
+  // is legitimately empty; it must not crash.
+  std::vector<std::string> res;
+  std::string s = "http://h/{}[0-1]";
+  paramed_string::expand(s.begin(), s.end(), std::back_inserter(res));
+  CPPUNIT_ASSERT_EQUAL((size_t)0, res.size());
 }
 
 void ParamedStringTest::testExpandAcceptsWideNumericRangeValues()
