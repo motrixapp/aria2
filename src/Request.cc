@@ -64,7 +64,7 @@ Request::Request()
       connectedPort_(0),
       wakeTime_(global::wallclock()),
       resetTryCountAfterWake_(false),
-      wakeCount_(0)
+      consecutive503Count_(0)
 {
 }
 

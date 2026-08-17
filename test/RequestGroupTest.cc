@@ -205,8 +205,7 @@ void RequestGroupTest::testCreateCheckIntegrityEntryRestartFromScratch()
   group.setDownloadContext(ctx);
   group.initPieceStorage();
 
-  auto entry =
-      group.createCheckIntegrityEntry(nullptr, RequestGroup::RESTART_FROM_SCRATCH);
+  group.createCheckIntegrityEntry(nullptr, RequestGroup::RESTART_FROM_SCRATCH);
 
   CPPUNIT_ASSERT_EQUAL((int64_t)0, group.getCompletedLength());
   CPPUNIT_ASSERT_EQUAL((int64_t)0, File(path).size());

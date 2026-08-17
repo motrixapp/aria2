@@ -38,7 +38,7 @@ class RpcHelperTest : public CppUnit::TestFixture {
 
 private:
   std::shared_ptr<Option> option_;
-  std::shared_ptr<DownloadEngine> e_;
+  std::unique_ptr<DownloadEngine> e_;
 
 public:
   void setUp()
@@ -79,6 +79,11 @@ std::unique_ptr<Dict> createRequestDict(const std::string& method,
   dict->put("method", method);
   dict->put("params", std::move(params));
   return dict;
+}
+
+RpcResponse authorizedResponse()
+{
+  return RpcResponse(0, RpcResponse::AUTHORIZED, Dict::g(), Null::g());
 }
 } // namespace
 
@@ -135,7 +140,7 @@ void RpcHelperTest::testAllAuthorizedEmptyBatchIsNotAuthorized()
 void RpcHelperTest::testAllAuthorizedRejectsMixedBatch()
 {
   std::vector<RpcResponse> results;
-  results.push_back(RpcResponse(0, RpcResponse::AUTHORIZED, Dict::g(), Null::g()));
+  results.push_back(authorizedResponse());
   results.push_back(
       createJsonRpcErrorResponse(-32600, "Invalid Request.", Null::g()));
   CPPUNIT_ASSERT(!all_authorized(results));
@@ -144,8 +149,8 @@ void RpcHelperTest::testAllAuthorizedRejectsMixedBatch()
 void RpcHelperTest::testAllAuthorizedAcceptsFullyAuthorizedBatch()
 {
   std::vector<RpcResponse> results;
-  results.push_back(RpcResponse(0, RpcResponse::AUTHORIZED, Dict::g(), Null::g()));
-  results.push_back(RpcResponse(0, RpcResponse::AUTHORIZED, Dict::g(), Null::g()));
+  results.push_back(authorizedResponse());
+  results.push_back(authorizedResponse());
   CPPUNIT_ASSERT(all_authorized(results));
 }
 

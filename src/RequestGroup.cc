@@ -226,15 +226,25 @@ RequestGroup::createCheckIntegrityEntry(DownloadEngine* e,
   auto infoFile =
       makeBtProgressInfoFile(downloadContext_, pieceStorage_, option_.get(), e);
 
+  // A conditional request answered with a fresh 200 means the local bytes
+  // and any saved progress are stale, so the resume / already-complete
+  // short-circuits below must be skipped entirely: truncate and start over
+  // (upstream #2280). Every non-RESTART path that survives those checks
+  // ends the same way, so this early return also keeps the fix in one place.
+  if (fileOpenMode == RESTART_FROM_SCRATCH) {
+    loadAndOpenFile(infoFile, RESTART_FROM_SCRATCH);
+    return make_unique<StreamCheckIntegrityEntry>(this);
+  }
+
   if (option_->getAsBool(PREF_CHECK_INTEGRITY) &&
       downloadContext_->isPieceHashVerificationAvailable()) {
     // When checking piece hash, we don't care file is downloaded and
     // infoFile exists.
-    loadAndOpenFile(infoFile, fileOpenMode);
+    loadAndOpenFile(infoFile);
     return make_unique<StreamCheckIntegrityEntry>(this);
   }
 
-  if (fileOpenMode == DEFAULT_FILE_OPEN && isPreLocalFileCheckEnabled() &&
+  if (isPreLocalFileCheckEnabled() &&
       (infoFile->exists() || (File(getFirstFilePath()).exists() &&
                               option_->getAsBool(PREF_CONTINUE)))) {
     // If infoFile exists or -c option is given, we need to check
@@ -258,11 +268,7 @@ RequestGroup::createCheckIntegrityEntry(DownloadEngine* e,
     return make_unique<StreamCheckIntegrityEntry>(this);
   }
 
-  // A same-length body must not be treated as "already complete" when the
-  // remote resource changed under a conditional request: the local bytes
-  // are stale, so skip the finished-by-length short-circuit and fall
-  // through to a from-scratch download (upstream #2280).
-  if (fileOpenMode == DEFAULT_FILE_OPEN && downloadFinishedByFileLength() &&
+  if (downloadFinishedByFileLength() &&
       downloadContext_->isChecksumVerificationAvailable()) {
     pieceStorage_->markAllPiecesDone();
     loadAndOpenFile(infoFile);
@@ -271,7 +277,7 @@ RequestGroup::createCheckIntegrityEntry(DownloadEngine* e,
     return std::move(tempEntry);
   }
 
-  loadAndOpenFile(infoFile, fileOpenMode);
+  loadAndOpenFile(infoFile);
   return make_unique<StreamCheckIntegrityEntry>(this);
 }
 

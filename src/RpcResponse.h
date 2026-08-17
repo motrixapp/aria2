@@ -82,7 +82,7 @@ bool any_not_authorized(const InputIterator begin, const InputIterator end)
 inline bool all_authorized(const std::vector<RpcResponse>& results)
 {
   return !results.empty() &&
-         std::none_of(results.begin(), results.end(), not_authorized);
+         !any_not_authorized(results.begin(), results.end());
 }
 
 std::string toXml(const RpcResponse& response, bool gzip = false);
