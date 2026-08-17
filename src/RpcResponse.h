@@ -37,6 +37,7 @@
 
 #include "common.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -68,6 +69,20 @@ template <typename InputIterator>
 bool any_not_authorized(const InputIterator begin, const InputIterator end)
 {
   return std::any_of(begin, end, not_authorized);
+}
+
+// Returns true only if |results| is non-empty and every response is
+// authorized. The non-empty guard matters: a batch request whose entries
+// are all invalid (non-dict) produces an empty result vector, and
+// any_not_authorized() returns false for an empty range. Callers that
+// negated any_not_authorized() therefore treated an empty batch as
+// authorized, which let an unauthenticated client mark its session
+// authorized with a bogus batch (upstream #1752). Use this to decide
+// whether a batch authorizes the session.
+inline bool all_authorized(const std::vector<RpcResponse>& results)
+{
+  return !results.empty() &&
+         std::none_of(results.begin(), results.end(), not_authorized);
 }
 
 std::string toXml(const RpcResponse& response, bool gzip = false);

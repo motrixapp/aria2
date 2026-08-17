@@ -129,12 +129,12 @@ namespace {
 void addResponse(WebSocketSession* wsSession,
                  const std::vector<RpcResponse>& results)
 {
-  bool notauthorized = rpc::any_not_authorized(results.begin(), results.end());
-  if (!notauthorized) {
+  bool authorized = rpc::all_authorized(results);
+  if (authorized) {
     wsSession->markAuthorized();
   }
   std::string response = toJsonBatch(results, "", false);
-  wsSession->addTextMessage(response, notauthorized);
+  wsSession->addTextMessage(response, !authorized);
 }
 } // namespace
 
