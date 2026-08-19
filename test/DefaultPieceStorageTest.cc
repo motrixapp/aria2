@@ -15,6 +15,7 @@
 #include "DiskAdaptor.h"
 #include "DiskWriterFactory.h"
 #include "PieceStatMan.h"
+#include "WrDiskCache.h"
 #include "prefs.h"
 
 namespace aria2 {
@@ -36,6 +37,7 @@ class DefaultPieceStorageTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testGetPieceCompletedPiece);
   CPPUNIT_TEST(testCancelPiece);
   CPPUNIT_TEST(testMarkPiecesDone);
+  CPPUNIT_TEST(testMarkPiecesDoneZeroReleasesWrCache);
   CPPUNIT_TEST(testGetCompletedLength);
   CPPUNIT_TEST(testGetFilteredCompletedLength);
   CPPUNIT_TEST(testGetNextUsedIndex);
@@ -75,6 +77,7 @@ public:
   void testGetPieceCompletedPiece();
   void testCancelPiece();
   void testMarkPiecesDone();
+  void testMarkPiecesDoneZeroReleasesWrCache();
   void testGetCompletedLength();
   void testGetFilteredCompletedLength();
   void testGetNextUsedIndex();
@@ -331,6 +334,27 @@ void DefaultPieceStorageTest::testMarkPiecesDone()
 
   ps.markPiecesDone(0);
   CPPUNIT_ASSERT_EQUAL((int64_t)0, ps.getCompletedLength());
+}
+
+void DefaultPieceStorageTest::testMarkPiecesDoneZeroReleasesWrCache()
+{
+  size_t pieceLength = 256_k;
+  auto dctx = std::make_shared<DownloadContext>(pieceLength, 4_m);
+  DefaultPieceStorage ps(dctx, option_.get());
+  WrDiskCache diskCache(1_m);
+  ps.setWrDiskCache(&diskCache);
+
+  auto piece = ps.getMissingPiece(0, 1);
+  auto data = new unsigned char[3]{'f', 'o', 'o'};
+  piece->updateWrCache(&diskCache, data, 0, 3, 3, 0);
+  CPPUNIT_ASSERT_EQUAL((size_t)3, diskCache.getSize());
+  CPPUNIT_ASSERT(piece->getWrDiskCacheEntry());
+
+  ps.markPiecesDone(0);
+
+  CPPUNIT_ASSERT_EQUAL((size_t)0, diskCache.getSize());
+  CPPUNIT_ASSERT(!piece->getWrDiskCacheEntry());
+  CPPUNIT_ASSERT_EQUAL((size_t)0, ps.countInFlightPiece());
 }
 
 void DefaultPieceStorageTest::testGetCompletedLength()

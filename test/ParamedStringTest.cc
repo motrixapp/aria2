@@ -13,6 +13,7 @@ class ParamedStringTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testExpandAcceptsWideNumericRangeValues);
   CPPUNIT_TEST(testExpandReportsNumericRangeOverflow);
   CPPUNIT_TEST(testExpandEmptyChoiceThenLoopDoesNotCrash);
+  CPPUNIT_TEST(testExpandRejectsResourceExhaustingRange);
   CPPUNIT_TEST_SUITE_END();
 
 public:
@@ -20,6 +21,7 @@ public:
   void testExpandAcceptsWideNumericRangeValues();
   void testExpandReportsNumericRangeOverflow();
   void testExpandEmptyChoiceThenLoopDoesNotCrash();
+  void testExpandRejectsResourceExhaustingRange();
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION(ParamedStringTest);
@@ -240,6 +242,21 @@ void ParamedStringTest::testExpandReportsNumericRangeOverflow()
 {
   std::vector<std::string> res;
   std::string s = "alpha:[1234567890-9876543210]:bravo";
+
+  try {
+    paramed_string::expand(s.begin(), s.end(), std::back_inserter(res));
+    CPPUNIT_FAIL("Exception must be thrown.");
+  }
+  catch (const Exception& e) {
+    CPPUNIT_ASSERT_EQUAL(std::string("Loop range overflow."),
+                         std::string(e.what()));
+  }
+}
+
+void ParamedStringTest::testExpandRejectsResourceExhaustingRange()
+{
+  std::vector<std::string> res;
+  std::string s = "http://{a,b}.example/[0-32768]";
 
   try {
     paramed_string::expand(s.begin(), s.end(), std::back_inserter(res));

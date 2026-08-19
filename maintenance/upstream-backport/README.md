@@ -1,5 +1,7 @@
 # Upstream issue backport audit
 
+[简体中文](README.zh-CN.md)
+
 This directory records which upstream aria2 bug fixes were backported into
 `aria2_motrix`, from where, and — most importantly — whether each fix is
 actually **effective on this fork's production call chain**, not merely
@@ -21,10 +23,12 @@ sufficient: a regression test can exercise an isolated primitive while the
 production call chain never reaches the fixed code. This audit re-checked
 every fix against the real chain — and found six ineffective, two
 dangerous, and three partial ports hiding behind a green `fixed-verified`.
+The final adversarial pass reverted both dangerous ports and repaired the
+remaining remotely triggerable resource-exhaustion and range-integrity gaps.
 
 ## `matrix.csv` schema
 
-`aria2-next`'s eight columns, plus three added here:
+`aria2-next`'s seven columns, plus three added here:
 
 | column | meaning |
 |--------|---------|
@@ -46,7 +50,7 @@ dangerous, and three partial ports hiding behind a green `fixed-verified`.
 | `verified-effective` | 25 | fix reaches and works on the production chain; regression + build/e2e green |
 | `defective-rewritten` | 5 | ported fix was defective; **rewritten here** and verified with a chain-spanning test |
 | `defective-fixed` | 4 | ported fix carried a regression/crash the audit caught; **repaired here** with a regression test |
-| `ported-defective` | 2 | defective and dangerous; **left as-is this pass**, flagged for a dedicated follow-up (see below) |
+| `unsafe-port-resolved` | 2 | defective and dangerous port was removed; its root cause was fixed (#1556) or the unsupported behavior was safely reverted (#1727) |
 | `ported-ineffective` | 5 | reaches production but is a no-op (already-fixed, or does not address the reported input); harmless |
 | `needs-attention` | 3 | partially effective / scope gap / niche regression; documented, not changed |
 | `ported-tests-pass` | 1 | ported unchanged, regression + full suite green, not independently deep-audited |
@@ -57,7 +61,7 @@ dangerous, and three partial ports hiding behind a green `fixed-verified`.
 |-------|--------|---------------------|
 | #1752 | `createJsonRpcErrorResponse` hard-coded `AUTHORIZED`; any malformed WS message authorized the session, which then received all notifications | `RpcHelperTest.cc` (7) + `e2e/websocket-auth` |
 | #2280 | `createCheckIntegrityEntry` dropped `FileOpenMode`, so the `RESTART_FROM_SCRATCH` branch was dead and a conditional 200 resumed against stale bytes | `RequestGroupTest.cc::testCreateCheckIntegrityEntryRestartFromScratch` + `e2e/conditional-get-restart` |
-| #1407 | modern-Schannel AND-ed `~SP_PROT` into a zero disabled-protocols mask (stays 0 = no floor), so `--min-tls-version` was a no-op | `WinTLSProtocolsTest.cc` (3) + mingw parity |
+| #1407 | modern-Schannel AND-ed `~SP_PROT` into a zero disabled-protocols mask (stays 0 = no floor), so `--min-tls-version` was a no-op; the final pass also made the minimum independent of machine policy by explicitly disabling PCT/SSL | `WinTLSProtocolsTest.cc` (3) + obsolete-protocol assertions + mingw parity |
 | #1839 | 503 reset the try count on wake, so a permanently-503 server retried forever | `e2e/503-max-tries` |
 | #1280 | `sqlite3_open_v2` opens lazily, so the immutable-URI fallback never triggered and Firefox WAL cookie import failed at read time | `Sqlite3CookieParserTest.cc::testMozParse_readOnlyWalSnapshot` |
 
@@ -68,32 +72,39 @@ Each was shown to FAIL against the pre-fix code and PASS after.
 - **#886/#1115/#2061** — the ported chunked-206-without-`Content-Range`
   rejection lacked the `getSegment()` guard, hard-failing a segment-less
   initial request that legitimately gets a 206 (a regression vs the
-  unknown-length path). Fixed; regression test added.
+  unknown-length path). Fixed; the final pass also closed two corruption
+  bypasses by validating transfer-encoded responses that do carry
+  `Content-Range` and rejecting segmented transfer-encoded 200/206 responses
+  without one. Regression tests cover all three cases.
 - **#1471** — the ported parameterized-URI range widening added an
   RPC-reachable divide-by-zero (empty `{}` choice before a loop) and a
-  `%d`/`int64_t` format mismatch. Fixed; regression test added.
+  `%d`/`int64_t` format mismatch. The final pass also capped aggregate
+  expansion at 65,536 strings, so `[0-2147483647]` is rejected instead of
+  attempting a multi-billion-element allocation. Fixed; regression tests
+  added.
 - **build integration** — `WebSocketSessionManTest.cc` was added to the
   unconditional test sources, breaking `make check` under
   `--disable-websocket`; now guarded by `ENABLE_WEBSOCKET`.
 
-## ⚠️ Dangerous ports left for follow-up (`ported-defective`)
+## Unsafe ports resolved (`unsafe-port-resolved`)
 
-These two are entangled with effective fixes and their real repair is
-larger than a backport-audit pass; they are **documented, not changed**,
-and should be handled next:
+The final adversarial pass removed both dangerous implementations while
+preserving unrelated effective fixes. This branch no longer masks a UAF or
+corrupts persisted integrity state:
 
-- **#1556 (WrDiskCache)** — the tested branch is production-unreachable
-  dead code; the one live branch masks a **use-after-free** (a `Piece`
-  destructor frees a `WrDiskCacheEntry` still held by the process-wide
-  cache after a `CANNOT_RESUME` retry), downgrading a deterministic abort
-  to a warning while the UAF continues. Recommend reverting to the upstream
-  abort and fixing the UAF separately.
+- **#1556 (WrDiskCache)** — removed the restore/reindex fallback. A missing
+  cache entry now fails closed again, instead of re-inserting a potentially
+  dangling pointer into the process-wide cache. The root cause was also fixed:
+  restarting from scratch now detaches every in-flight piece's write-cache
+  entry before destroying the piece. Regression tests cover both the cache
+  lifecycle and the rejected update.
 - **#1727 (Metalink/BT whole-file checksum)** — the consumer
   (`BtCheckIntegrityEntry::onDownloadFinished`) is unreachable at BT
-  completion, so the checksum still never runs; and in the one path it does
-  fire it **clears a piece-hash-verified bitfield, which this fork then
-  persists into the SQLite3 progress row**. Recommend reverting the
-  consumer scheduling (keep #2033, which is effective).
+  completion; in the one path where it could fire it cleared a
+  piece-hash-verified bitfield that this fork persists into SQLite3. The
+  checksum carryover and dead consumer scheduling were removed, while the
+  effective #2033 behavior remains. A regression test verifies that the
+  unsupported whole-file checksum is not carried into the BT context.
 
 ## Notable `needs-attention` items
 
@@ -107,12 +118,23 @@ and should be handled next:
 - **#826** — only the AAAA-only half is fixed; the parallel v4/v6 race half
   is untouched (pre-existing).
 
+## Final adversarial verdict
+
+**High: 0.** The remaining `needs-attention` entries are bounded compatibility
+or product-integration gaps; none is a high-severity confidentiality,
+integrity, memory-safety, authentication, or remotely-triggerable availability
+finding in this branch.
+
 ## Verification performed
 
-- `make check` (full CppUnit suite, 1080 tests) — pass, 0 fail / 0 error.
-- `test/e2e/` Node.js suite — existing 11 cases plus 3 new defect cases,
-  all pass; confirms the #2280 `RequestGroup` changes did not regress the
-  SQLite3 persistence hook.
+- `make check` (full CppUnit suite) — pass, 0 fail / 0 error.
+- `test/e2e/` Node.js suite — 15 cases pass; confirms the #2280
+  `RequestGroup` changes did not regress the SQLite3 persistence hook.
+- Final adversarial regression set covers transfer-encoded range mismatch,
+  segmented 200-without-range rejection, bounded parameter expansion,
+  fail-closed write-cache updates, restart-from-scratch cache detachment,
+  unsupported checksum carryover, and explicit pre-TLS Schannel protocol
+  masking.
 - New e2e cases for #1752, #2280, #1839 each shown to FAIL against the
   pre-fix code and PASS after; #1407 pure mask unit-tested (RED vs the
   original bit logic) and `WinTLSContext.cc` shown to produce no new errors

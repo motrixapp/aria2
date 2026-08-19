@@ -74,7 +74,8 @@ void HttpResponse::validateResponse() const
   switch (statusCode) {
   case 200: // OK
   case 206: // Partial Content
-    if (!httpHeader_->defined(HttpHeader::TRANSFER_ENCODING)) {
+    if (!httpHeader_->defined(HttpHeader::TRANSFER_ENCODING) ||
+        httpHeader_->defined(HttpHeader::CONTENT_RANGE)) {
       // compare the received range against the requested range
       auto responseRange = httpHeader_->getRange();
       if (!httpRequest_->isRangeSatisfied(responseRange)) {
@@ -86,14 +87,13 @@ void HttpResponse::validateResponse() const
             error_code::CANNOT_RESUME);
       }
     }
-    else if (statusCode == 206 && httpRequest_->getSegment() &&
-             !httpHeader_->defined(HttpHeader::CONTENT_RANGE)) {
-      // A chunked 206 with no Content-Range gives us no way to place the
-      // bytes at the requested offset, so a genuinely ranged request must
-      // fail rather than corrupt the file (upstream #886/#1115/#2061). Guard
-      // on getSegment(): a segment-less initial request never sent a Range
-      // header, and its 206 is handled as an unknown-length download, so it
-      // must not be rejected here (matching isRangeSatisfied's !segment_).
+    else if (httpRequest_->getSegment()) {
+      // A transfer-encoded response with no Content-Range gives us no way to
+      // place the bytes at the requested offset, regardless of whether the
+      // server labels it 200 or 206. A genuinely ranged request must fail
+      // rather than corrupt the file (upstream #886/#1115/#2061). Guard on
+      // getSegment(): a segment-less initial request never sent a Range
+      // header and remains a compatible unknown-length download.
       auto responseRange = httpHeader_->getRange();
       throw DL_ABORT_EX2(
           fmt(EX_INVALID_RANGE_HEADER, httpRequest_->getStartByte(),

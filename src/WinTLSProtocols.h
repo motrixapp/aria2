@@ -44,6 +44,24 @@
 // Schannel protocol-version bit constants. The Windows SDK defines these in
 // <schannel.h>; provide fallbacks matching those values so the pure mask
 // logic below compiles and is unit-testable on non-Windows hosts.
+#ifndef SP_PROT_PCT1_CLIENT
+#  define SP_PROT_PCT1_CLIENT 0x00000002
+#endif
+#ifndef SP_PROT_PCT1_SERVER
+#  define SP_PROT_PCT1_SERVER 0x00000001
+#endif
+#ifndef SP_PROT_SSL2_CLIENT
+#  define SP_PROT_SSL2_CLIENT 0x00000008
+#endif
+#ifndef SP_PROT_SSL2_SERVER
+#  define SP_PROT_SSL2_SERVER 0x00000004
+#endif
+#ifndef SP_PROT_SSL3_CLIENT
+#  define SP_PROT_SSL3_CLIENT 0x00000020
+#endif
+#ifndef SP_PROT_SSL3_SERVER
+#  define SP_PROT_SSL3_SERVER 0x00000010
+#endif
 #ifndef SP_PROT_TLS1_0_CLIENT
 #  define SP_PROT_TLS1_0_CLIENT 0x00000080
 #endif
@@ -79,13 +97,21 @@ namespace aria2 {
 // the version floor.
 inline uint32_t winTLSDisabledProtocols(bool client, TLSVersion ver)
 {
+  const uint32_t obsolete =
+      client ? (SP_PROT_PCT1_CLIENT | SP_PROT_SSL2_CLIENT |
+                SP_PROT_SSL3_CLIENT)
+             : (SP_PROT_PCT1_SERVER | SP_PROT_SSL2_SERVER |
+                SP_PROT_SSL3_SERVER);
   const uint32_t tls10 =
       client ? SP_PROT_TLS1_0_CLIENT : SP_PROT_TLS1_0_SERVER;
   const uint32_t tls11 =
       client ? SP_PROT_TLS1_1_CLIENT : SP_PROT_TLS1_1_SERVER;
   const uint32_t tls12 =
       client ? SP_PROT_TLS1_2_CLIENT : SP_PROT_TLS1_2_SERVER;
-  uint32_t disabled = 0;
+  // Enforce the minimum independently of machine-wide Schannel policy. Old
+  // protocols are normally disabled by modern Windows defaults and by
+  // SCH_USE_STRONG_CRYPTO, but an administrator can change those defaults.
+  uint32_t disabled = obsolete;
   switch (ver) {
   case TLS_PROTO_TLS13:
     disabled |= tls12;

@@ -51,8 +51,27 @@ namespace aria2 {
 namespace paramed_string {
 
 namespace {
+// Preserve the largest expansion the old uint16_t range accepted, while
+// allowing range endpoints themselves to use the widened int32_t domain.
+// Parameterized URIs are reachable through JSON-RPC, so bounding only size_t
+// arithmetic is insufficient: a syntactically valid [0-2147483647] would
+// otherwise attempt to reserve billions of strings and terminate the process.
+constexpr size_t MAX_EXPANDED_STRINGS = 65536;
+
+void checkExpansionSize(size_t currentSize, size_t factor,
+                        const char* errorMessage)
+{
+  if (currentSize == 0 || factor == 0) {
+    return;
+  }
+  if (factor > MAX_EXPANDED_STRINGS / currentSize) {
+    throw DL_ABORT_EX(errorMessage);
+  }
+}
+
 template <typename T>
-void checkLoopSize(std::vector<std::string>& res, T start, T end, int64_t step)
+void checkLoopSize(const std::vector<std::string>& res, T start, T end,
+                   int64_t step)
 {
   // An empty prefix set (e.g. from an empty choice group "{}") expands to
   // nothing regardless of the loop width, so there is no overflow to check
@@ -60,11 +79,9 @@ void checkLoopSize(std::vector<std::string>& res, T start, T end, int64_t step)
   if (res.empty()) {
     return;
   }
-  auto n = (end - start) / step + 1;
-  if (static_cast<uint64_t>(n) >
-      std::numeric_limits<size_t>::max() / res.size()) {
-    throw DL_ABORT_EX("Loop range overflow.");
-  }
+  const auto n = (end - start) / step + 1;
+  checkExpansionSize(res.size(), static_cast<size_t>(n),
+                     "Loop range overflow.");
 }
 } // namespace
 
@@ -79,6 +96,8 @@ InputIterator expandChoice(std::vector<std::string>& res, InputIterator first,
   }
   std::vector<Scip> choices;
   util::splitIter(first, i, std::back_inserter(choices), ',', true, false);
+  checkExpansionSize(res.size(), choices.size(),
+                     "Choice expansion overflow.");
   std::vector<std::string> res2;
   res2.reserve(res.size() * choices.size());
   for (std::vector<std::string>::const_iterator i = res.begin(),

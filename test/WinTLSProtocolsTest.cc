@@ -32,6 +32,9 @@ void WinTLSProtocolsTest::testClientDisabledMaskEnforcesMinimum()
 {
   // Minimum TLS 1.2: 1.0 and 1.1 disabled, 1.2 left enabled.
   auto tls12 = winTLSDisabledProtocols(true, TLS_PROTO_TLS12);
+  CPPUNIT_ASSERT((tls12 & SP_PROT_PCT1_CLIENT) != 0);
+  CPPUNIT_ASSERT((tls12 & SP_PROT_SSL2_CLIENT) != 0);
+  CPPUNIT_ASSERT((tls12 & SP_PROT_SSL3_CLIENT) != 0);
   CPPUNIT_ASSERT((tls12 & SP_PROT_TLS1_0_CLIENT) != 0);
   CPPUNIT_ASSERT((tls12 & SP_PROT_TLS1_1_CLIENT) != 0);
   CPPUNIT_ASSERT((tls12 & SP_PROT_TLS1_2_CLIENT) == 0);
@@ -44,8 +47,9 @@ void WinTLSProtocolsTest::testClientDisabledMaskEnforcesMinimum()
   CPPUNIT_ASSERT((tls13 & SP_PROT_TLS1_1_CLIENT) != 0);
   CPPUNIT_ASSERT((tls13 & SP_PROT_TLS1_2_CLIENT) != 0);
 
-  // Minimum TLS 1.1: only 1.0 disabled.
+  // Minimum TLS 1.1: 1.0 and all pre-TLS protocols disabled.
   auto tls11 = winTLSDisabledProtocols(true, TLS_PROTO_TLS11);
+  CPPUNIT_ASSERT((tls11 & SP_PROT_SSL3_CLIENT) != 0);
   CPPUNIT_ASSERT((tls11 & SP_PROT_TLS1_0_CLIENT) != 0);
   CPPUNIT_ASSERT((tls11 & SP_PROT_TLS1_1_CLIENT) == 0);
 }
@@ -53,6 +57,9 @@ void WinTLSProtocolsTest::testClientDisabledMaskEnforcesMinimum()
 void WinTLSProtocolsTest::testServerDisabledMaskEnforcesMinimum()
 {
   auto tls12 = winTLSDisabledProtocols(false, TLS_PROTO_TLS12);
+  CPPUNIT_ASSERT((tls12 & SP_PROT_PCT1_SERVER) != 0);
+  CPPUNIT_ASSERT((tls12 & SP_PROT_SSL2_SERVER) != 0);
+  CPPUNIT_ASSERT((tls12 & SP_PROT_SSL3_SERVER) != 0);
   CPPUNIT_ASSERT((tls12 & SP_PROT_TLS1_0_SERVER) != 0);
   CPPUNIT_ASSERT((tls12 & SP_PROT_TLS1_1_SERVER) != 0);
   CPPUNIT_ASSERT((tls12 & SP_PROT_TLS1_2_SERVER) == 0);

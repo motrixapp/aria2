@@ -26,7 +26,7 @@ class BtDependencyTest : public CppUnit::TestFixture {
 
   CPPUNIT_TEST_SUITE(BtDependencyTest);
   CPPUNIT_TEST(testResolve);
-  CPPUNIT_TEST(testResolve_preservesChecksum);
+  CPPUNIT_TEST(testResolve_dropsUnsupportedWholeFileChecksum);
   CPPUNIT_TEST(testResolve_nullDependee);
   CPPUNIT_TEST(testResolve_originalNameNoMatch);
   CPPUNIT_TEST(testResolve_singleFileWithoutOriginalName);
@@ -76,7 +76,7 @@ public:
   }
 
   void testResolve();
-  void testResolve_preservesChecksum();
+  void testResolve_dropsUnsupportedWholeFileChecksum();
   void testResolve_nullDependee();
   void testResolve_originalNameNoMatch();
   void testResolve_singleFileWithoutOriginalName();
@@ -112,7 +112,7 @@ void BtDependencyTest::testResolve()
   CPPUNIT_ASSERT(firstFileEntry->isRequested());
 }
 
-void BtDependencyTest::testResolve_preservesChecksum()
+void BtDependencyTest::testResolve_dropsUnsupportedWholeFileChecksum()
 {
   std::string filename = A2_TEST_DIR "/single.torrent";
   std::shared_ptr<RequestGroup> dependant = createDependant(option_);
@@ -128,10 +128,11 @@ void BtDependencyTest::testResolve_preservesChecksum()
   BtDependency dep(dependant.get(), dependee);
   CPPUNIT_ASSERT(dep.resolve());
 
-  const std::shared_ptr<DownloadContext>& dctx =
-      dependant->getDownloadContext();
-  CPPUNIT_ASSERT_EQUAL(std::string("sha-1"), dctx->getHashType());
-  CPPUNIT_ASSERT_EQUAL(digest, dctx->getDigest());
+  // The BT completion path cannot safely run a Metalink whole-file checksum:
+  // carrying it across would leave the task permanently pending and a
+  // mismatch would erase the already piece-hash-verified BT bitfield.
+  CPPUNIT_ASSERT(
+      !dependant->getDownloadContext()->isChecksumVerificationAvailable());
 }
 
 void BtDependencyTest::testResolve_nullDependee()
