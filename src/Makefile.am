@@ -139,6 +139,7 @@ SRCS =  \
 	HttpServerCommand.cc HttpServerCommand.h\
 	HttpServerResponseCommand.cc HttpServerResponseCommand.h\
 	HttpSkipResponseCommand.cc HttpSkipResponseCommand.h\
+	HttpTailReclaimPolicy.cc HttpTailReclaimPolicy.h\
 	IndexedList.h\
 	InitiateConnectionCommand.cc InitiateConnectionCommand.h\
 	InitiateConnectionCommandFactory.cc InitiateConnectionCommandFactory.h\

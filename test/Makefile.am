@@ -33,6 +33,7 @@ aria2c_SOURCES = AllTest.cc\
 	SingletonHolderTest.cc\
 	HttpHeaderTest.cc\
 	HttpResponseTest.cc\
+	HttpTailReclaimPolicyTest.cc\
 	FileTest.cc\
 	OptionTest.cc\
 	DefaultDiskWriterTest.cc\
@@ -314,7 +315,8 @@ AM_CFLAGS = @EXTRACFLAGS@
 
 AM_CXXFLAGS = @WARNCXXFLAGS@ @CXX1XCXXFLAGS@ @EXTRACXXFLAGS@
 
-EXTRA_DIST = 4096chunk.txt\
+EXTRA_DIST = perf/http-tail-reclaim.bench.mjs\
+	4096chunk.txt\
 	chunkChecksumTestFile250.txt\
 	cookies-readonly-wal.sqlite\
 	cookies.sqlite\
