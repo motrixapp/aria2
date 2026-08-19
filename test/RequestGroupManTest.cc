@@ -28,10 +28,12 @@ namespace {
 class ActiveDownloadCommand : public Command {
 private:
   RequestGroup* requestGroup_;
+  DownloadEngine* e_;
 
 public:
-  ActiveDownloadCommand(cuid_t cuid, RequestGroup* requestGroup)
-      : Command(cuid), requestGroup_(requestGroup)
+  ActiveDownloadCommand(cuid_t cuid, RequestGroup* requestGroup,
+                        DownloadEngine* e)
+      : Command(cuid), requestGroup_(requestGroup), e_(e)
   {
     setStatusActive();
     requestGroup_->increaseNumCommand();
@@ -41,7 +43,11 @@ public:
 
   bool execute() CXX11_OVERRIDE
   {
-    return requestGroup_->isHaltRequested();
+    if (requestGroup_->isHaltRequested()) {
+      return true;
+    }
+    e_->addCommand(std::unique_ptr<Command>(this));
+    return false;
   }
 };
 } // namespace
@@ -278,7 +284,8 @@ void RequestGroupManTest::testReduceMaxConcurrentDownloads()
     rg->setRequestGroupMan(rgman_);
     rg->setState(RequestGroup::STATE_ACTIVE);
     rgman_->addRequestGroup(rg);
-    e_->addCommand(make_unique<ActiveDownloadCommand>(e_->newCUID(), rg.get()));
+    e_->addCommand(
+        make_unique<ActiveDownloadCommand>(e_->newCUID(), rg.get(), e_.get()));
   }
 
   rgman_->setMaxConcurrentDownloads(1);
@@ -287,8 +294,8 @@ void RequestGroupManTest::testReduceMaxConcurrentDownloads()
   CPPUNIT_ASSERT(rgs[1]->isHaltRequested());
   CPPUNIT_ASSERT(rgs[2]->isHaltRequested());
 
-  while (e_->run(true) != 0)
-    ;
+  CPPUNIT_ASSERT_EQUAL(1, e_->run(true));
+  rgman_->removeStoppedGroup(e_.get());
 
   CPPUNIT_ASSERT_EQUAL((size_t)1, rgman_->getRequestGroups().size());
   auto active = rgman_->getRequestGroups().begin();
