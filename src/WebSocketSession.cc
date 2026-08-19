@@ -117,6 +117,9 @@ namespace {
 void addResponse(WebSocketSession* wsSession, const RpcResponse& res)
 {
   bool notauthorized = rpc::not_authorized(res);
+  if (!notauthorized) {
+    wsSession->markAuthorized();
+  }
   std::string response = toJson(res, "", false);
   wsSession->addTextMessage(response, notauthorized);
 }
@@ -126,9 +129,12 @@ namespace {
 void addResponse(WebSocketSession* wsSession,
                  const std::vector<RpcResponse>& results)
 {
-  bool notauthorized = rpc::any_not_authorized(results.begin(), results.end());
+  bool authorized = rpc::all_authorized(results);
+  if (authorized) {
+    wsSession->markAuthorized();
+  }
   std::string response = toJsonBatch(results, "", false);
-  wsSession->addTextMessage(response, notauthorized);
+  wsSession->addTextMessage(response, !authorized);
 }
 } // namespace
 
@@ -215,6 +221,7 @@ WebSocketSession::WebSocketSession(const std::shared_ptr<SocketCore>& socket,
     : socket_(socket),
       e_(e),
       ignorePayload_(false),
+      authorized_(e->validateToken(A2STR::NIL)),
       receivedLength_(0),
       command_(nullptr)
 {

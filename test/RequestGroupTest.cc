@@ -6,7 +6,12 @@
 #include "DownloadContext.h"
 #include "FileEntry.h"
 #include "PieceStorage.h"
+#include "DefaultBtProgressInfoFile.h"
+#include "File.h"
+#include "TestUtil.h"
 #include "DownloadResult.h"
+#include "CheckIntegrityEntry.h"
+#include "prefs.h"
 
 namespace aria2 {
 
@@ -16,6 +21,8 @@ class RequestGroupTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testGetFirstFilePath);
   CPPUNIT_TEST(testTryAutoFileRenaming);
   CPPUNIT_TEST(testCreateDownloadResult);
+  CPPUNIT_TEST(testLoadAndOpenFileRestartFromScratch);
+  CPPUNIT_TEST(testCreateCheckIntegrityEntryRestartFromScratch);
   CPPUNIT_TEST_SUITE_END();
 
 private:
@@ -27,6 +34,8 @@ public:
   void testGetFirstFilePath();
   void testTryAutoFileRenaming();
   void testCreateDownloadResult();
+  void testLoadAndOpenFileRestartFromScratch();
+  void testCreateCheckIntegrityEntryRestartFromScratch();
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION(RequestGroupTest);
@@ -145,6 +154,61 @@ void RequestGroupTest::testCreateDownloadResult()
 
     CPPUNIT_ASSERT_EQUAL(error_code::FINISHED, result->result);
   }
+}
+
+void RequestGroupTest::testLoadAndOpenFileRestartFromScratch()
+{
+  auto path = std::string(A2_TEST_OUT_DIR) +
+              "/aria2_RequestGroupTest_testLoadAndOpenFileRestartFromScratch";
+  File(path).remove();
+  File(path + DefaultBtProgressInfoFile::getSuffix()).remove();
+  createFile(path, 1_k);
+
+  option_->put(PREF_CONTINUE, A2_V_TRUE);
+  option_->put(PREF_FILE_ALLOCATION, V_NONE);
+
+  auto ctx = std::make_shared<DownloadContext>(1_k, 2_k, path);
+  RequestGroup group(GroupId::create(), option_);
+  group.setDownloadContext(ctx);
+  group.initPieceStorage();
+
+  auto infoFile =
+      std::make_shared<DefaultBtProgressInfoFile>(ctx, group.getPieceStorage(),
+                                                  option_.get());
+  group.loadAndOpenFile(infoFile, RequestGroup::RESTART_FROM_SCRATCH);
+
+  CPPUNIT_ASSERT_EQUAL((int64_t)0, group.getCompletedLength());
+  CPPUNIT_ASSERT_EQUAL((int64_t)0, File(path).size());
+}
+
+// Drive the production entry point rather than loadAndOpenFile() directly.
+// This is the path a conditional GET answered with a fresh 200 takes
+// (HttpResponseCommand -> createCheckIntegrityEntry). aria2-next threaded
+// RESTART_FROM_SCRATCH only into a guard and dropped it before the four
+// loadAndOpenFile() calls, so the restart branch was dead: the existing
+// 1 KiB file would be resumed (completed length 1024) instead of reset.
+// The fix must forward the mode so createCheckIntegrityEntry truncates.
+void RequestGroupTest::testCreateCheckIntegrityEntryRestartFromScratch()
+{
+  auto path =
+      std::string(A2_TEST_OUT_DIR) +
+      "/aria2_RequestGroupTest_testCreateCheckIntegrityEntryRestartFromScratch";
+  File(path).remove();
+  File(path + DefaultBtProgressInfoFile::getSuffix()).remove();
+  createFile(path, 1_k);
+
+  option_->put(PREF_CONTINUE, A2_V_TRUE);
+  option_->put(PREF_FILE_ALLOCATION, V_NONE);
+
+  auto ctx = std::make_shared<DownloadContext>(1_k, 2_k, path);
+  RequestGroup group(GroupId::create(), option_);
+  group.setDownloadContext(ctx);
+  group.initPieceStorage();
+
+  group.createCheckIntegrityEntry(nullptr, RequestGroup::RESTART_FROM_SCRATCH);
+
+  CPPUNIT_ASSERT_EQUAL((int64_t)0, group.getCompletedLength());
+  CPPUNIT_ASSERT_EQUAL((int64_t)0, File(path).size());
 }
 
 } // namespace aria2

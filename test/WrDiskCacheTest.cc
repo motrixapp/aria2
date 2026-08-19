@@ -14,6 +14,7 @@ class WrDiskCacheTest : public CppUnit::TestFixture {
 
   CPPUNIT_TEST_SUITE(WrDiskCacheTest);
   CPPUNIT_TEST(testAdd);
+  CPPUNIT_TEST(testUpdateRejectsRemovedEntry);
   CPPUNIT_TEST_SUITE_END();
 
   std::shared_ptr<DirectDiskAdaptor> adaptor_;
@@ -29,6 +30,7 @@ public:
   }
 
   void testAdd();
+  void testUpdateRejectsRemovedEntry();
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION(WrDiskCacheTest);
@@ -72,6 +74,21 @@ void WrDiskCacheTest::testAdd()
       writer_->getString());
   CPPUNIT_ASSERT_EQUAL((size_t)0, e2.getSize());
   CPPUNIT_ASSERT_EQUAL((size_t)0, dc.getSize());
+}
+
+void WrDiskCacheTest::testUpdateRejectsRemovedEntry()
+{
+  WrDiskCache dc(20);
+  WrDiskCacheEntry entry(adaptor_);
+  entry.cacheData(createDataCell(0, "foo"));
+  CPPUNIT_ASSERT(dc.add(&entry));
+  CPPUNIT_ASSERT(dc.remove(&entry));
+
+  entry.cacheData(createDataCell(3, "bar"));
+  CPPUNIT_ASSERT(!dc.update(&entry, 3));
+  CPPUNIT_ASSERT_EQUAL((size_t)0, dc.getSize());
+
+  entry.clear();
 }
 
 } // namespace aria2

@@ -20,8 +20,37 @@
 #include "DownloadEngine.h"
 #include "SelectEventPoll.h"
 #include "UriListParser.h"
+#include "Command.h"
 
 namespace aria2 {
+
+namespace {
+class ActiveDownloadCommand : public Command {
+private:
+  RequestGroup* requestGroup_;
+  DownloadEngine* e_;
+
+public:
+  ActiveDownloadCommand(cuid_t cuid, RequestGroup* requestGroup,
+                        DownloadEngine* e)
+      : Command(cuid), requestGroup_(requestGroup), e_(e)
+  {
+    setStatusActive();
+    requestGroup_->increaseNumCommand();
+  }
+
+  ~ActiveDownloadCommand() { requestGroup_->decreaseNumCommand(); }
+
+  bool execute() CXX11_OVERRIDE
+  {
+    if (requestGroup_->isHaltRequested()) {
+      return true;
+    }
+    e_->addCommand(std::unique_ptr<Command>(this));
+    return false;
+  }
+};
+} // namespace
 
 class RequestGroupManTest : public CppUnit::TestFixture {
 
@@ -33,6 +62,7 @@ class RequestGroupManTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testChangeReservedGroupPosition);
   CPPUNIT_TEST(testFillRequestGroupFromReserver);
   CPPUNIT_TEST(testFillRequestGroupFromReserver_uriParser);
+  CPPUNIT_TEST(testReduceMaxConcurrentDownloads);
   CPPUNIT_TEST(testInsertReservedGroup);
   CPPUNIT_TEST(testAddDownloadResult);
   CPPUNIT_TEST_SUITE_END();
@@ -65,6 +95,7 @@ public:
   void testChangeReservedGroupPosition();
   void testFillRequestGroupFromReserver();
   void testFillRequestGroupFromReserver_uriParser();
+  void testReduceMaxConcurrentDownloads();
   void testInsertReservedGroup();
   void testAddDownloadResult();
 };
@@ -238,6 +269,42 @@ void RequestGroupManTest::testFillRequestGroupFromReserver_uriParser()
   itr = rgman_->getReservedGroups().begin();
   CPPUNIT_ASSERT_EQUAL(rgs[0]->getGID(), (*itr)->getGID());
   CPPUNIT_ASSERT_EQUAL((size_t)3, rgman_->getRequestGroups().size());
+}
+
+void RequestGroupManTest::testReduceMaxConcurrentDownloads()
+{
+  std::vector<std::shared_ptr<RequestGroup>> rgs{
+      createRequestGroup(0, 0, "active1", "http://host/active1",
+                         util::copy(option_)),
+      createRequestGroup(0, 0, "active2", "http://host/active2",
+                         util::copy(option_)),
+      createRequestGroup(0, 0, "active3", "http://host/active3",
+                         util::copy(option_))};
+  for (const auto& rg : rgs) {
+    rg->setRequestGroupMan(rgman_);
+    rg->setState(RequestGroup::STATE_ACTIVE);
+    rgman_->addRequestGroup(rg);
+    e_->addCommand(
+        make_unique<ActiveDownloadCommand>(e_->newCUID(), rg.get(), e_.get()));
+  }
+
+  rgman_->setMaxConcurrentDownloads(1);
+  rgman_->reduceActiveDownloadsToLimit(e_.get());
+  CPPUNIT_ASSERT(!rgs[0]->isHaltRequested());
+  CPPUNIT_ASSERT(rgs[1]->isHaltRequested());
+  CPPUNIT_ASSERT(rgs[2]->isHaltRequested());
+
+  CPPUNIT_ASSERT_EQUAL(1, e_->run(true));
+  rgman_->removeStoppedGroup(e_.get());
+
+  CPPUNIT_ASSERT_EQUAL((size_t)1, rgman_->getRequestGroups().size());
+  auto active = rgman_->getRequestGroups().begin();
+  CPPUNIT_ASSERT_EQUAL(rgs[0]->getGID(), (*active)->getGID());
+  CPPUNIT_ASSERT_EQUAL((size_t)2, rgman_->getReservedGroups().size());
+  CPPUNIT_ASSERT(findReservedGroup(rgman_, rgs[1]->getGID()));
+  CPPUNIT_ASSERT(findReservedGroup(rgman_, rgs[2]->getGID()));
+  CPPUNIT_ASSERT(!rgs[1]->isPauseRequested());
+  CPPUNIT_ASSERT(!rgs[2]->isPauseRequested());
 }
 
 void RequestGroupManTest::testInsertReservedGroup()

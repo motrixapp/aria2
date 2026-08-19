@@ -47,7 +47,11 @@ class HttpResponseTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testValidateResponse);
   CPPUNIT_TEST(testValidateResponse_good_range);
   CPPUNIT_TEST(testValidateResponse_bad_range);
-  CPPUNIT_TEST(testValidateResponse_chunked);
+  CPPUNIT_TEST(testValidateResponse_rejectsWrongTransferEncodedRange);
+  CPPUNIT_TEST(testValidateResponse_allowsMatchingTransferEncodedRange);
+  CPPUNIT_TEST(testValidateResponse_rejectsTransferEncodedRange);
+  CPPUNIT_TEST(testValidateResponse_rejectsTransferEncoded200ForSegment);
+  CPPUNIT_TEST(testValidateResponse_allowsTransferEncoded206WithoutSegment);
   CPPUNIT_TEST(testValidateResponse_withIfModifiedSince);
   CPPUNIT_TEST(testProcessRedirect);
   CPPUNIT_TEST(testRetrieveCookie);
@@ -79,7 +83,11 @@ public:
   void testValidateResponse();
   void testValidateResponse_good_range();
   void testValidateResponse_bad_range();
-  void testValidateResponse_chunked();
+  void testValidateResponse_rejectsWrongTransferEncodedRange();
+  void testValidateResponse_allowsMatchingTransferEncodedRange();
+  void testValidateResponse_rejectsTransferEncodedRange();
+  void testValidateResponse_rejectsTransferEncoded200ForSegment();
+  void testValidateResponse_allowsTransferEncoded206WithoutSegment();
   void testValidateResponse_withIfModifiedSince();
   void testProcessRedirect();
   void testRetrieveCookie();
@@ -431,7 +439,7 @@ void HttpResponseTest::testValidateResponse_bad_range()
   }
 }
 
-void HttpResponseTest::testValidateResponse_chunked()
+void HttpResponseTest::testValidateResponse_rejectsWrongTransferEncodedRange()
 {
   HttpResponse httpResponse;
   httpResponse.setHttpHeader(make_unique<HttpHeader>());
@@ -451,13 +459,94 @@ void HttpResponseTest::testValidateResponse_chunked()
                                     "bytes 0-10485760/10485761");
   httpResponse.getHttpHeader()->put(HttpHeader::TRANSFER_ENCODING, "chunked");
 
-  // if transfer-encoding is specified, then range validation is skipped.
-  try {
-    httpResponse.validateResponse();
-  }
-  catch (Exception& e) {
-    CPPUNIT_FAIL("exception must not be thrown.");
-  }
+  CPPUNIT_ASSERT_THROW(httpResponse.validateResponse(), Exception);
+}
+
+void HttpResponseTest::testValidateResponse_allowsMatchingTransferEncodedRange()
+{
+  HttpResponse httpResponse;
+  httpResponse.setHttpHeader(make_unique<HttpHeader>());
+
+  auto httpRequest = make_unique<HttpRequest>();
+  auto p = std::make_shared<Piece>(1, 1_m);
+  auto segment = std::make_shared<PiecedSegment>(1_m, p);
+  httpRequest->setSegment(segment);
+  auto fileEntry = std::make_shared<FileEntry>("file", 10_m, 0);
+  httpRequest->setFileEntry(fileEntry);
+  auto request = std::make_shared<Request>();
+  request->setUri("http://localhost/archives/aria2-1.0.0.tar.bz2");
+  httpRequest->setRequest(request);
+  httpResponse.setHttpRequest(std::move(httpRequest));
+  httpResponse.getHttpHeader()->setStatusCode(206);
+  httpResponse.getHttpHeader()->put(HttpHeader::CONTENT_RANGE,
+                                    "bytes 1048576-2097151/10485760");
+  httpResponse.getHttpHeader()->put(HttpHeader::TRANSFER_ENCODING, "chunked");
+
+  httpResponse.validateResponse();
+}
+
+void HttpResponseTest::testValidateResponse_rejectsTransferEncodedRange()
+{
+  HttpResponse httpResponse;
+  httpResponse.setHttpHeader(make_unique<HttpHeader>());
+
+  auto httpRequest = make_unique<HttpRequest>();
+  auto p = std::make_shared<Piece>(1, 1_m);
+  auto segment = std::make_shared<PiecedSegment>(1_m, p);
+  httpRequest->setSegment(segment);
+  auto fileEntry = std::make_shared<FileEntry>("file", 10_m, 0);
+  httpRequest->setFileEntry(fileEntry);
+  auto request = std::make_shared<Request>();
+  request->setUri("http://localhost/archives/aria2-1.0.0.tar.bz2");
+  httpRequest->setRequest(request);
+  httpResponse.setHttpRequest(std::move(httpRequest));
+  httpResponse.getHttpHeader()->setStatusCode(206);
+  httpResponse.getHttpHeader()->put(HttpHeader::TRANSFER_ENCODING, "chunked");
+
+  CPPUNIT_ASSERT_THROW(httpResponse.validateResponse(), Exception);
+}
+
+void HttpResponseTest::testValidateResponse_rejectsTransferEncoded200ForSegment()
+{
+  HttpResponse httpResponse;
+  httpResponse.setHttpHeader(make_unique<HttpHeader>());
+
+  auto httpRequest = make_unique<HttpRequest>();
+  auto p = std::make_shared<Piece>(1, 1_m);
+  auto segment = std::make_shared<PiecedSegment>(1_m, p);
+  httpRequest->setSegment(segment);
+  auto fileEntry = std::make_shared<FileEntry>("file", 10_m, 0);
+  httpRequest->setFileEntry(fileEntry);
+  auto request = std::make_shared<Request>();
+  request->setUri("http://localhost/archives/aria2-1.0.0.tar.bz2");
+  httpRequest->setRequest(request);
+  httpResponse.setHttpRequest(std::move(httpRequest));
+  httpResponse.getHttpHeader()->setStatusCode(200);
+  httpResponse.getHttpHeader()->put(HttpHeader::TRANSFER_ENCODING, "chunked");
+
+  CPPUNIT_ASSERT_THROW(httpResponse.validateResponse(), Exception);
+}
+
+void HttpResponseTest::testValidateResponse_allowsTransferEncoded206WithoutSegment()
+{
+  // A segment-less initial request never sent a Range header, so a chunked
+  // 206 with no Content-Range must be accepted as an unknown-length
+  // download rather than rejected. Rejecting it (missing the getSegment()
+  // guard) regressed downloads that previously worked (upstream #886).
+  HttpResponse httpResponse;
+  httpResponse.setHttpHeader(make_unique<HttpHeader>());
+
+  auto httpRequest = make_unique<HttpRequest>();
+  auto fileEntry = std::make_shared<FileEntry>("file", 0, 0);
+  httpRequest->setFileEntry(fileEntry);
+  auto request = std::make_shared<Request>();
+  request->setUri("http://localhost/archives/aria2-1.0.0.tar.bz2");
+  httpRequest->setRequest(request);
+  httpResponse.setHttpRequest(std::move(httpRequest));
+  httpResponse.getHttpHeader()->setStatusCode(206);
+  httpResponse.getHttpHeader()->put(HttpHeader::TRANSFER_ENCODING, "chunked");
+
+  httpResponse.validateResponse();
 }
 
 void HttpResponseTest::testValidateResponse_withIfModifiedSince()

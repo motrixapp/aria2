@@ -246,6 +246,12 @@ bool HttpResponseCommand::executeInternal()
     return skipResponseBody(std::move(httpResponse));
   }
 
+  // A successful (2xx) response breaks any run of 503s: the request object
+  // is reused across retries, so without this a server that intermittently
+  // returns 503 could accumulate to the consecutive-503 cap over a download
+  // that is otherwise progressing (upstream #1839).
+  req->resetConsecutive503Count();
+
   if (fe->isUniqueProtocol()) {
     // Redirection should be considered here. We need to parse
     // original URI to get hostname.
@@ -363,8 +369,13 @@ bool HttpResponseCommand::handleDefaultEncoding(
     return true;
   }
 
-  auto checkEntry =
-      getRequestGroup()->createCheckIntegrityEntry(getDownloadEngine());
+  // A conditional request that came back as a full 200 (rather than 304)
+  // means the remote resource changed, so any locally saved progress is
+  // stale and the file must be re-fetched from scratch (upstream #2280).
+  auto checkEntry = getRequestGroup()->createCheckIntegrityEntry(
+      getDownloadEngine(), httpResponse->getHttpRequest()->conditionalRequest()
+                               ? RequestGroup::RESTART_FROM_SCRATCH
+                               : RequestGroup::DEFAULT_FILE_OPEN);
   if (!checkEntry) {
     return true;
   }

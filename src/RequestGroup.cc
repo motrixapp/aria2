@@ -220,10 +220,21 @@ void RequestGroup::closeFile()
 // TODO The function name is not intuitive at all.. it does not convey
 // that this function open file.
 std::unique_ptr<CheckIntegrityEntry>
-RequestGroup::createCheckIntegrityEntry(DownloadEngine* e)
+RequestGroup::createCheckIntegrityEntry(DownloadEngine* e,
+                                        FileOpenMode fileOpenMode)
 {
   auto infoFile =
       makeBtProgressInfoFile(downloadContext_, pieceStorage_, option_.get(), e);
+
+  // A conditional request answered with a fresh 200 means the local bytes
+  // and any saved progress are stale, so the resume / already-complete
+  // short-circuits below must be skipped entirely: truncate and start over
+  // (upstream #2280). Every non-RESTART path that survives those checks
+  // ends the same way, so this early return also keeps the fix in one place.
+  if (fileOpenMode == RESTART_FROM_SCRATCH) {
+    loadAndOpenFile(infoFile, RESTART_FROM_SCRATCH);
+    return make_unique<StreamCheckIntegrityEntry>(this);
+  }
 
   if (option_->getAsBool(PREF_CHECK_INTEGRITY) &&
       downloadContext_->isPieceHashVerificationAvailable()) {
@@ -731,11 +742,25 @@ void RequestGroup::removeDefunctControlFile(
 }
 
 void RequestGroup::loadAndOpenFile(
-    const std::shared_ptr<BtProgressInfoFile>& progressInfoFile)
+    const std::shared_ptr<BtProgressInfoFile>& progressInfoFile,
+    FileOpenMode fileOpenMode)
 {
   try {
     if (!isPreLocalFileCheckEnabled()) {
       pieceStorage_->getDiskAdaptor()->initAndOpenFile();
+      return;
+    }
+    if (fileOpenMode == RESTART_FROM_SCRATCH) {
+      // A conditional request was answered with a fresh 200, so both the
+      // saved progress and the partially downloaded bytes are stale. Drop
+      // the control file and truncate the output (initAndOpenFile uses
+      // O_TRUNC and reallocates to the new total length) so the download
+      // starts from zero instead of resuming against outdated content.
+      if (progressInfoFile->exists()) {
+        progressInfoFile->removeFile();
+      }
+      pieceStorage_->getDiskAdaptor()->initAndOpenFile();
+      setProgressInfoFile(progressInfoFile);
       return;
     }
     removeDefunctControlFile(progressInfoFile);

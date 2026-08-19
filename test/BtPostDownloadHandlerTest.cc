@@ -10,6 +10,8 @@
 #include "PieceStorage.h"
 #include "DiskAdaptor.h"
 #include "RequestGroupCriteria.h"
+#include "BtCheckIntegrityEntry.h"
+#include "prefs.h"
 
 namespace aria2 {
 
@@ -18,6 +20,7 @@ class BtPostDownloadHandlerTest : public CppUnit::TestFixture {
   CPPUNIT_TEST_SUITE(BtPostDownloadHandlerTest);
   CPPUNIT_TEST(testCanHandle_extension);
   CPPUNIT_TEST(testCanHandle_contentType);
+  CPPUNIT_TEST(testBtIncompleteHashCheckReportPolicy);
   CPPUNIT_TEST(testGetNextRequestGroups);
   CPPUNIT_TEST_SUITE_END();
 
@@ -29,6 +32,7 @@ public:
 
   void testCanHandle_extension();
   void testCanHandle_contentType();
+  void testBtIncompleteHashCheckReportPolicy();
   void testGetNextRequestGroups();
 };
 
@@ -62,6 +66,17 @@ void BtPostDownloadHandlerTest::testCanHandle_contentType()
 
   dctx->getFirstFileEntry()->setContentType("application/octet-stream");
   CPPUNIT_ASSERT(!handler.canHandle(&rg));
+}
+
+void BtPostDownloadHandlerTest::testBtIncompleteHashCheckReportPolicy()
+{
+  RequestGroup rg(GroupId::create(), option_);
+  BtCheckIntegrityEntry entry(&rg);
+
+  CPPUNIT_ASSERT(!entry.shouldReportIncompleteAsError());
+
+  option_->put(PREF_HASH_CHECK_ONLY, A2_V_TRUE);
+  CPPUNIT_ASSERT(entry.shouldReportIncompleteAsError());
 }
 
 void BtPostDownloadHandlerTest::testGetNextRequestGroups()

@@ -62,7 +62,9 @@ Request::Request()
       maxPipelinedRequest_(1),
       removalRequested_(false),
       connectedPort_(0),
-      wakeTime_(global::wallclock())
+      wakeTime_(global::wallclock()),
+      resetTryCountAfterWake_(false),
+      consecutive503Count_(0)
 {
 }
 

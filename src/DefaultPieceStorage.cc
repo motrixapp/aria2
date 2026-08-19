@@ -759,6 +759,14 @@ void DefaultPieceStorage::markPiecesDone(int64_t length)
   else if (length == 0) {
     // TODO this would go to markAllPiecesUndone()
     bitfieldMan_->clearAllBit();
+    // Restarting from scratch discards every in-flight Piece. Each Piece owns
+    // its WrDiskCacheEntry, while the process-wide WrDiskCache only stores a
+    // raw pointer to that entry. Detach it before clearing usedPieces_, or the
+    // Piece destructor frees the entry and leaves a dangling pointer in the
+    // cache (upstream #1556).
+    for (auto& piece : usedPieces_) {
+      piece->releaseWrCache(wrDiskCache_);
+    }
     usedPieces_.clear();
   }
   else {

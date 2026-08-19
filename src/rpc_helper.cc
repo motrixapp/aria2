@@ -73,8 +73,13 @@ RpcResponse createJsonRpcErrorResponse(int code, const std::string& msg,
   auto params = Dict::g();
   params->put("code", Integer::g(code));
   params->put("message", msg);
-  return rpc::RpcResponse{code, rpc::RpcResponse::AUTHORIZED, std::move(params),
-                          std::move(id)};
+  // A protocol-level error (parse error, invalid request, invalid params)
+  // is produced without ever validating a token, so it must report itself
+  // as NOTAUTHORIZED. Reporting AUTHORIZED here let an unauthenticated
+  // WebSocket client mark its session authorized just by sending malformed
+  // input, then receive every download notification (upstream #1752).
+  return rpc::RpcResponse{code, rpc::RpcResponse::NOTAUTHORIZED,
+                          std::move(params), std::move(id)};
 }
 
 RpcResponse processJsonRpcRequest(Dict* jsondict, DownloadEngine* e)

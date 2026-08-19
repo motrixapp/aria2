@@ -3,7 +3,14 @@
 #include <cppunit/extensions/HelperMacros.h>
 
 #include "RpcRequest.h"
+#include "RpcResponse.h"
 #include "RecoverableException.h"
+#include "DownloadEngine.h"
+#include "SelectEventPoll.h"
+#include "Option.h"
+#include "prefs.h"
+#include "ValueBase.h"
+#include "a2functional.h"
 #ifdef ENABLE_XML_RPC
 #  include "XmlRpcRequestParserStateMachine.h"
 #endif // ENABLE_XML_RPC
@@ -20,10 +27,26 @@ class RpcHelperTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testParseMemory_shouldFail);
   CPPUNIT_TEST(testParseMemory_withoutStringTag);
 #endif // ENABLE_XML_RPC
+  CPPUNIT_TEST(testCreateJsonRpcErrorResponseIsNotAuthorized);
+  CPPUNIT_TEST(testProcessRequestInvalidRequestIsNotAuthorized);
+  CPPUNIT_TEST(testProcessRequestNoTokenIsNotAuthorized);
+  CPPUNIT_TEST(testProcessRequestValidTokenIsAuthorized);
+  CPPUNIT_TEST(testAllAuthorizedEmptyBatchIsNotAuthorized);
+  CPPUNIT_TEST(testAllAuthorizedRejectsMixedBatch);
+  CPPUNIT_TEST(testAllAuthorizedAcceptsFullyAuthorizedBatch);
   CPPUNIT_TEST_SUITE_END();
 
+private:
+  std::shared_ptr<Option> option_;
+  std::unique_ptr<DownloadEngine> e_;
+
 public:
-  void setUp() {}
+  void setUp()
+  {
+    option_ = std::make_shared<Option>();
+    e_ = make_unique<DownloadEngine>(make_unique<SelectEventPoll>());
+    e_->setOption(option_.get());
+  }
 
   void tearDown() {}
 
@@ -33,9 +56,103 @@ public:
   void testParseMemory_withoutParams();
   void testParseMemory_withoutStringTag();
 #endif // ENABLE_XML_RPC
+  void testCreateJsonRpcErrorResponseIsNotAuthorized();
+  void testProcessRequestInvalidRequestIsNotAuthorized();
+  void testProcessRequestNoTokenIsNotAuthorized();
+  void testProcessRequestValidTokenIsAuthorized();
+  void testAllAuthorizedEmptyBatchIsNotAuthorized();
+  void testAllAuthorizedRejectsMixedBatch();
+  void testAllAuthorizedAcceptsFullyAuthorizedBatch();
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION(RpcHelperTest);
+
+namespace {
+// Builds a JSON-RPC request dict the way the parser hands it to
+// processJsonRpcRequest(): a Dict carrying "method", "id" and "params".
+std::unique_ptr<Dict> createRequestDict(const std::string& method,
+                                        std::unique_ptr<List> params)
+{
+  auto dict = Dict::g();
+  dict->put("jsonrpc", "2.0");
+  dict->put("id", "1");
+  dict->put("method", method);
+  dict->put("params", std::move(params));
+  return dict;
+}
+
+RpcResponse authorizedResponse()
+{
+  return RpcResponse(0, RpcResponse::AUTHORIZED, Dict::g(), Null::g());
+}
+} // namespace
+
+// A protocol-level error response is produced without ever validating a
+// token, so it must never report itself as authorized. When it did, an
+// unauthenticated WebSocket client could flip its session to authorized
+// just by sending malformed input (upstream issue #1752).
+void RpcHelperTest::testCreateJsonRpcErrorResponseIsNotAuthorized()
+{
+  auto res = createJsonRpcErrorResponse(-32700, "Parse error.", Null::g());
+  CPPUNIT_ASSERT(not_authorized(res));
+}
+
+void RpcHelperTest::testProcessRequestInvalidRequestIsNotAuthorized()
+{
+  option_->put(PREF_RPC_SECRET, "secret");
+  // A dict with no "method" is an invalid request; it never reaches token
+  // validation and must stay unauthorized.
+  auto dict = Dict::g();
+  dict->put("jsonrpc", "2.0");
+  dict->put("id", "1");
+  auto res = processJsonRpcRequest(dict.get(), e_.get());
+  CPPUNIT_ASSERT(not_authorized(res));
+}
+
+void RpcHelperTest::testProcessRequestNoTokenIsNotAuthorized()
+{
+  option_->put(PREF_RPC_SECRET, "secret");
+  auto dict = createRequestDict("aria2.getVersion", List::g());
+  auto res = processJsonRpcRequest(dict.get(), e_.get());
+  CPPUNIT_ASSERT(not_authorized(res));
+}
+
+void RpcHelperTest::testProcessRequestValidTokenIsAuthorized()
+{
+  option_->put(PREF_RPC_SECRET, "secret");
+  auto params = List::g();
+  params->append("token:secret");
+  auto dict = createRequestDict("aria2.getVersion", std::move(params));
+  auto res = processJsonRpcRequest(dict.get(), e_.get());
+  CPPUNIT_ASSERT(!not_authorized(res));
+}
+
+// An empty batch (a JSON array whose every entry was an invalid,
+// non-dict value) yields no responses. any_not_authorized() returns
+// false for an empty range, so the callers used to treat it as fully
+// authorized. all_authorized() must reject the empty batch instead.
+void RpcHelperTest::testAllAuthorizedEmptyBatchIsNotAuthorized()
+{
+  std::vector<RpcResponse> results;
+  CPPUNIT_ASSERT(!all_authorized(results));
+}
+
+void RpcHelperTest::testAllAuthorizedRejectsMixedBatch()
+{
+  std::vector<RpcResponse> results;
+  results.push_back(authorizedResponse());
+  results.push_back(
+      createJsonRpcErrorResponse(-32600, "Invalid Request.", Null::g()));
+  CPPUNIT_ASSERT(!all_authorized(results));
+}
+
+void RpcHelperTest::testAllAuthorizedAcceptsFullyAuthorizedBatch()
+{
+  std::vector<RpcResponse> results;
+  results.push_back(authorizedResponse());
+  results.push_back(authorizedResponse());
+  CPPUNIT_ASSERT(all_authorized(results));
+}
 
 #ifdef ENABLE_XML_RPC
 

@@ -53,6 +53,11 @@ BtCheckIntegrityEntry::BtCheckIntegrityEntry(RequestGroup* requestGroup)
 
 BtCheckIntegrityEntry::~BtCheckIntegrityEntry() = default;
 
+bool BtCheckIntegrityEntry::shouldReportIncompleteAsError() const
+{
+  return getRequestGroup()->getOption()->getAsBool(PREF_HASH_CHECK_ONLY);
+}
+
 void BtCheckIntegrityEntry::onDownloadIncomplete(
     std::vector<std::unique_ptr<Command>>& commands, DownloadEngine* e)
 {

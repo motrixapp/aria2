@@ -78,6 +78,11 @@ class PeerStorage;
 class RequestGroup {
 public:
   enum HaltReason { NONE, SHUTDOWN_SIGNAL, USER_REQUEST };
+  // How createCheckIntegrityEntry()/loadAndOpenFile() should treat an
+  // already-present output file and its control file. RESTART_FROM_SCRATCH
+  // is used when a conditional request was answered with a fresh 200: the
+  // local bytes are stale and must be discarded (upstream issue #2280).
+  enum FileOpenMode { DEFAULT_FILE_OPEN, RESTART_FROM_SCRATCH };
   enum State {
     // Waiting in the reserved queue
     STATE_WAITING,
@@ -224,7 +229,9 @@ public:
     return segmentMan_;
   }
 
-  std::unique_ptr<CheckIntegrityEntry> createCheckIntegrityEntry(DownloadEngine* e);
+  std::unique_ptr<CheckIntegrityEntry>
+  createCheckIntegrityEntry(DownloadEngine* e,
+                            FileOpenMode fileOpenMode = DEFAULT_FILE_OPEN);
 
   // Returns first bootstrap commands to initiate a download.
   // If this is HTTP/FTP download and file size is unknown, only 1 command
@@ -393,7 +400,8 @@ public:
   bool downloadFinishedByFileLength();
 
   void
-  loadAndOpenFile(const std::shared_ptr<BtProgressInfoFile>& progressInfoFile);
+  loadAndOpenFile(const std::shared_ptr<BtProgressInfoFile>& progressInfoFile,
+                  FileOpenMode fileOpenMode = DEFAULT_FILE_OPEN);
 
   void shouldCancelDownloadForSafety();
 

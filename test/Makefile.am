@@ -45,6 +45,7 @@ aria2c_SOURCES = AllTest.cc\
 	ExceptionTest.cc\
 	FmtTest.cc\
 	DownloadHandlersTest.cc\
+	DownloadEngineTest.cc\
 	SignatureTest.cc\
 	ServerStatManTest.cc\
 	FeedbackURISelectorTest.cc\
@@ -84,6 +85,7 @@ aria2c_SOURCES = AllTest.cc\
 	SegListTest.cc\
 	ParamedStringTest.cc\
 	RpcHelperTest.cc\
+	WinTLSProtocolsTest.cc\
 	AbstractCommandTest.cc\
 	SinkStreamFilterTest.cc\
 	WrDiskCacheTest.cc\
@@ -95,6 +97,13 @@ aria2c_SOURCES = AllTest.cc\
 if ENABLE_XML_RPC
 aria2c_SOURCES += XmlRpcRequestParserControllerTest.cc
 endif # ENABLE_XML_RPC
+
+if ENABLE_WEBSOCKET
+# WebSocketSession pulls in <wslay/wslay.h>, available only when websocket
+# support is configured; guarding this keeps `make check` building under
+# --disable-websocket.
+aria2c_SOURCES += WebSocketSessionManTest.cc
+endif # ENABLE_WEBSOCKET
 
 if HAVE_SOME_FALLOCATE
 aria2c_SOURCES += FallocFileAllocationIteratorTest.cc
@@ -237,7 +246,8 @@ aria2c_SOURCES += MetalinkerTest.cc\
 endif # ENABLE_METALINK
 
 if ENABLE_ASYNC_DNS
-aria2c_SOURCES += AsyncNameResolverTest.cc
+aria2c_SOURCES += AsyncNameResolverTest.cc\
+	AsyncNameResolverManTest.cc
 endif # ENABLE_ASYNC_DNS
 
 if !HAVE_TIMEGM
@@ -306,6 +316,7 @@ AM_CXXFLAGS = @WARNCXXFLAGS@ @CXX1XCXXFLAGS@ @EXTRACXXFLAGS@
 
 EXTRA_DIST = 4096chunk.txt\
 	chunkChecksumTestFile250.txt\
+	cookies-readonly-wal.sqlite\
 	cookies.sqlite\
 	chromium_cookies.sqlite\
 	emptyfile\

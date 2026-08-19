@@ -73,6 +73,11 @@ private:
   bool removalRequested_;
   uint16_t connectedPort_;
   Timer wakeTime_;
+  bool resetTryCountAfterWake_;
+  // Consecutive HTTP 503 retries. Independent of tryCount_ (which 503 does
+  // not consume), this bounds the otherwise-unlimited 503 retry loop; see
+  // AbstractCommand::execute() (upstream #1839).
+  int consecutive503Count_;
 
   bool parseUri(const std::string& uri);
 
@@ -168,6 +173,16 @@ public:
   void setWakeTime(Timer timer) { wakeTime_ = timer; }
 
   const Timer& getWakeTime() { return wakeTime_; }
+
+  void setResetTryCountAfterWake(bool f) { resetTryCountAfterWake_ = f; }
+
+  bool resetTryCountAfterWake() const { return resetTryCountAfterWake_; }
+
+  void incrementConsecutive503Count() { ++consecutive503Count_; }
+
+  void resetConsecutive503Count() { consecutive503Count_ = 0; }
+
+  int getConsecutive503Count() const { return consecutive503Count_; }
 
   static const std::string METHOD_GET;
   static const std::string METHOD_HEAD;
