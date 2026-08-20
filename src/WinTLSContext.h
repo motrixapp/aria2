@@ -36,12 +36,19 @@
 #ifndef D_WIN_TLS_CONTEXT_H
 #define D_WIN_TLS_CONTEXT_H
 
+#if defined(__MINGW32__) && !defined(SCHANNEL_USE_BLACKLISTS)
+#  define SCHANNEL_USE_BLACKLISTS
+#endif // __MINGW32__ && !SCHANNEL_USE_BLACKLISTS
+
 #include "common.h"
 #include "config.h"
 
 #include <string>
 
 #include <windows.h>
+#ifdef __MINGW32__
+#  include <subauth.h>
+#endif // __MINGW32__
 #include <security.h>
 #include <schnlsp.h>
 

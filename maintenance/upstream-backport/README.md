@@ -137,9 +137,9 @@ finding in this branch.
   masking.
 - New e2e cases for #1752, #2280, #1839 each shown to FAIL against the
   pre-fix code and PASS after; #1407 pure mask unit-tested (RED vs the
-  original bit logic) and `WinTLSContext.cc` shown to produce no new errors
-  vs the ported original under the ubuntu mingw-w64 cross toolchain (the
-  residual errors are a pre-existing `SCH_CREDENTIALS`-type gap in that
-  toolchain). Full Windows compile/link is validated by the Windows CI lane.
+  original bit logic). The MinGW path enables `SCHANNEL_USE_BLACKLISTS`
+  before including Schannel headers so both `SCH_CREDENTIALS` and
+  `TLS_PARAMETERS` are available to the 32-bit and 64-bit cross compilers.
+  Full Windows compile/link is validated by the release Windows lanes.
 - Independent re-audit of all 45 issues by parallel review agents; their
   per-issue findings are recorded in `matrix.csv`.
