@@ -183,6 +183,7 @@ HTTP/FTP/SFTP Options
 .. option:: -x, --max-connection-per-server=<NUM>
 
   The maximum number of connections to one server for each download.
+  Possible Values: ``1``-``1024``
   Default: ``1``
 
 .. option:: --max-file-not-found=<NUM>
