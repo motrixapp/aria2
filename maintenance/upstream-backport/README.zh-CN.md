@@ -117,8 +117,8 @@ UAF，也不会破坏已持久化的完整性状态：
   200 响应、参数展开上限、写缓存更新失败关闭、从头重下时解除缓存、不受支持的
   校验和跨上下文传递，以及显式屏蔽 Schannel 的 TLS 之前协议。
 - #1752、#2280、#1839 的新增端到端用例均已证明修复前失败、修复后通过；#1407
-  的纯掩码逻辑已进行单元测试，并验证原始位逻辑为红、修复后为绿。在 Ubuntu
-  mingw-w64 交叉工具链下，`WinTLSContext.cc` 相比原回移代码没有新增错误；剩余错误
-  是该工具链既有的 `SCH_CREDENTIALS` 类型缺口。完整 Windows 编译和链接由
-  Windows CI 验证。
+  的纯掩码逻辑已进行单元测试，并验证原始位逻辑为红、修复后为绿。MinGW 路径会在
+  引入 Schannel 头文件前启用 `SCHANNEL_USE_BLACKLISTS`，确保 32 位和 64 位交叉
+  编译器均能获得 `SCH_CREDENTIALS` 与 `TLS_PARAMETERS` 类型。完整 Windows 编译
+  和链接由发布流程中的 Windows 构建通道验证。
 - 45 个 Issue 均已由并行审查代理独立复审；逐项结论记录在 `matrix.csv`。
