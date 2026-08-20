@@ -765,6 +765,7 @@ void RpcMethodTest::testChangeGlobalOption()
   auto req = createReq(ChangeGlobalOptionRpcMethod::getMethodName());
   auto opt = Dict::g();
   opt->put(PREF_MAX_OVERALL_DOWNLOAD_LIMIT->k, "100K");
+  opt->put(PREF_MAX_CONNECTION_PER_SERVER->k, "1024");
 #ifdef ENABLE_BITTORRENT
   opt->put(PREF_MAX_OVERALL_UPLOAD_LIMIT->k, "50K");
 #endif // ENABLE_BITTORRENT
@@ -776,12 +777,23 @@ void RpcMethodTest::testChangeGlobalOption()
       (int)100_k, e_->getRequestGroupMan()->getMaxOverallDownloadSpeedLimit());
   CPPUNIT_ASSERT_EQUAL(std::string("102400"),
                        e_->getOption()->get(PREF_MAX_OVERALL_DOWNLOAD_LIMIT));
+  CPPUNIT_ASSERT_EQUAL(std::string("1024"),
+                       e_->getOption()->get(PREF_MAX_CONNECTION_PER_SERVER));
 #ifdef ENABLE_BITTORRENT
   CPPUNIT_ASSERT_EQUAL(
       (int)50_k, e_->getRequestGroupMan()->getMaxOverallUploadSpeedLimit());
   CPPUNIT_ASSERT_EQUAL(std::string("51200"),
                        e_->getOption()->get(PREF_MAX_OVERALL_UPLOAD_LIMIT));
 #endif // ENABLE_BITTORRENT
+
+  req = createReq(ChangeGlobalOptionRpcMethod::getMethodName());
+  opt = Dict::g();
+  opt->put(PREF_MAX_CONNECTION_PER_SERVER->k, "1025");
+  req.params->append(std::move(opt));
+  res = m.execute(std::move(req), e_.get());
+  CPPUNIT_ASSERT_EQUAL(1, res.code);
+  CPPUNIT_ASSERT_EQUAL(std::string("1024"),
+                       e_->getOption()->get(PREF_MAX_CONNECTION_PER_SERVER));
 }
 
 void RpcMethodTest::testChangeGlobalOption_withBadOption()
