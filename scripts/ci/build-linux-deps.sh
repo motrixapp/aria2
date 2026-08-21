@@ -53,6 +53,10 @@ fetch https://www.sqlite.org/$SQLITE_YEAR/sqlite-$SQLITE_VERSION.tar.gz s.tgz "$
 # Per-arch target: generic64 assumes a 64-bit word (breaks 32-bit armv7l).
 # CC/AR/RANLIB come from the Dockerfile ENV (already ${TRIPLE}-*); do NOT also pass
 # --cross-compile-prefix or openssl doubles it (…-musl-…-musl-gcc: not found).
+# Keep OpenSSL's runtime trust-store lookup independent from the cross-compilation
+# prefix. SSL_CTX_set_default_verify_paths() will use /etc/ssl/cert.pem and
+# /etc/ssl/certs by default, while SSL_CERT_FILE/SSL_CERT_DIR can still override
+# those locations on distributions with a different CA layout.
 fetch https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz o.tgz "$OPENSSL_SHA256"
 case "$TRIPLE" in
   x86_64-*)  ossl_target=linux-x86_64 ;;
@@ -60,7 +64,7 @@ case "$TRIPLE" in
   arm*)      ossl_target=linux-armv4 ;;
   *)         ossl_target=linux-generic64 ;;
 esac
-( cd openssl-$OPENSSL_VERSION && ./Configure no-shared no-module no-tests --prefix="$PREFIX" --libdir=lib "$ossl_target" && make -j$j && make install_sw )
+( cd openssl-$OPENSSL_VERSION && ./Configure no-shared no-module no-tests --prefix="$PREFIX" --openssldir=/etc/ssl --libdir=lib "$ossl_target" && make -j$j && make install_sw )
 # libssh2
 fetch https://github.com/libssh2/libssh2/releases/download/libssh2-$LIBSSH2_VERSION/libssh2-$LIBSSH2_VERSION.tar.gz h.tgz "$LIBSSH2_SHA256"
 ( cd libssh2-$LIBSSH2_VERSION && for p in "$PATCH_DIR"/libssh2-$LIBSSH2_VERSION-*.patch; do patch -p1 < "$p"; done && ./configure --host="$TRIPLE" --enable-static --disable-shared --with-crypto=openssl --with-libssl-prefix="$PREFIX" --prefix="$PREFIX" LIBS="$ATOMIC_LIB" && make -j$j && make install )
