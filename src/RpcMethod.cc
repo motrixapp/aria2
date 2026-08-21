@@ -161,6 +161,9 @@ void RpcMethod::gatherRequestOption(Option* option, const Dict* optionsDict)
     gatherOption(optionsDict->begin(), optionsDict->end(),
                  std::mem_fn(&OptionHandler::getInitialOption), option,
                  optionParser_);
+    if (optionsDict->get(PREF_BT_EXTERNAL_IP->k)) {
+      option->put(PREF_BT_EXTERNAL_IP_OVERRIDE, A2_V_TRUE);
+    }
   }
 }
 
@@ -198,6 +201,9 @@ void RpcMethod::gatherChangeableOption(Option* option, Option* pendingOption,
     std::string opval;
     if (getOptionValueString(opval, (*first).second.get())) {
       handler->parse(*dst, opval);
+      if (pref == PREF_BT_EXTERNAL_IP) {
+        dst->put(PREF_BT_EXTERNAL_IP_OVERRIDE, A2_V_TRUE);
+      }
     }
     else if (handler->getCumulative()) {
       // header and index-out option can take array as value
@@ -221,6 +227,9 @@ void RpcMethod::gatherChangeableOptionForReserved(Option* option,
     gatherOption(optionsDict->begin(), optionsDict->end(),
                  std::mem_fn(&OptionHandler::getChangeOptionForReserved),
                  option, optionParser_);
+    if (optionsDict->get(PREF_BT_EXTERNAL_IP->k)) {
+      option->put(PREF_BT_EXTERNAL_IP_OVERRIDE, A2_V_TRUE);
+    }
   }
 }
 

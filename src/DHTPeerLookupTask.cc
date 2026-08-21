@@ -50,17 +50,26 @@
 #include "DHTQueryMessage.h"
 #include "DHTGetPeersMessage.h"
 #include "DHTAnnouncePeerMessage.h"
+#include "BtRegistry.h"
 
 #include "fmt.h"
 
 namespace aria2 {
 
 DHTPeerLookupTask::DHTPeerLookupTask(
-    const std::shared_ptr<DownloadContext>& downloadContext, uint16_t tcpPort)
+    const std::shared_ptr<DownloadContext>& downloadContext,
+    const std::shared_ptr<const BtAnnouncePortState>& announcePortState,
+    int family)
     : DHTAbstractNodeLookupTask<DHTGetPeersReplyMessage>(
           bittorrent::getInfoHash(downloadContext)),
-      tcpPort_(tcpPort)
+      announcePortState_(announcePortState),
+      family_(family)
 {
+}
+
+uint16_t DHTPeerLookupTask::getAnnouncePort() const
+{
+  return announcePortState_->getAnnouncePort(family_);
 }
 
 void DHTPeerLookupTask::getNodesFromMessage(
@@ -115,7 +124,7 @@ void DHTPeerLookupTask::onFinish()
         getMessageFactory()->createAnnouncePeerMessage(
             node,
             getTargetID(), // this is infoHash
-            tcpPort_, token));
+            getAnnouncePort(), token));
     --num;
   }
 }

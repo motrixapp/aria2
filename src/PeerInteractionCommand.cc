@@ -54,7 +54,6 @@
 #include "DefaultBtMessageReceiver.h"
 #include "DefaultBtRequestFactory.h"
 #include "DefaultBtMessageFactory.h"
-#include "DefaultBtInteractive.h"
 #include "PeerConnection.h"
 #include "ExtensionMessageFactory.h"
 #include "DHTRoutingTable.h"
@@ -92,7 +91,9 @@ PeerInteractionCommand::PeerInteractionCommand(
       btRuntime_{btRuntime},
       pieceStorage_{pieceStorage},
       peerStorage_{peerStorage},
-      sequence_{sequence}
+      sequence_{sequence},
+      family_{AF_INET},
+      announcePortRevision_{0}
 {
   // TODO move following bunch of processing to separate method, like init()
   if (sequence_ == INITIATOR_SEND_HANDSHAKE) {
@@ -102,16 +103,17 @@ PeerInteractionCommand::PeerInteractionCommand(
         getOption()->getAsInt(PREF_PEER_CONNECTION_TIMEOUT)));
   }
 
-  int family;
   unsigned char compact[COMPACT_LEN_IPV6];
   int compactlen = bittorrent::packcompact(compact, getPeer()->getIPAddress(),
                                            getPeer()->getPort());
   if (compactlen == COMPACT_LEN_IPV6) {
-    family = AF_INET6;
+    family_ = AF_INET6;
   }
   else {
-    family = AF_INET;
+    family_ = AF_INET;
   }
+  announcePortRevision_ =
+      e->getBtRegistry()->getAnnouncePortRevision(family_);
 
   auto torrentAttrs =
       bittorrent::getTorrentAttrs(requestGroup_->getDownloadContext());
@@ -139,7 +141,7 @@ PeerInteractionCommand::PeerInteractionCommand(
   factory->setPeerStorage(peerStorage.get());
   factory->setExtensionMessageFactory(extensionMessageFactory.get());
   factory->setPeer(getPeer());
-  if (family == AF_INET) {
+  if (family_ == AF_INET) {
     factory->setLocalNode(DHTRegistry::getData().localNode.get());
     factory->setRoutingTable(DHTRegistry::getData().routingTable.get());
     factory->setTaskQueue(DHTRegistry::getData().taskQueue.get());
@@ -234,7 +236,7 @@ PeerInteractionCommand::PeerInteractionCommand(
     if (getOption()->getAsBool(PREF_ENABLE_PEER_EXCHANGE)) {
       btInteractive->setUTPexEnabled(true);
     }
-    if (family == AF_INET) {
+    if (family_ == AF_INET) {
       if (DHTRegistry::isInitialized()) {
         btInteractive->setDHTEnabled(true);
         factoryPtr->setDHTEnabled(true);
@@ -272,7 +274,8 @@ PeerInteractionCommand::PeerInteractionCommand(
         std::move(utMetadataRequestTracker));
   }
 
-  btInteractive->setTcpPort(e->getBtRegistry()->getTcpPort());
+  btInteractive->updateAdvertisedPort(
+      e->getBtRegistry()->getAnnouncePort(family_));
   if (metadataGetMode) {
     btInteractive->enableMetadataGetMode();
   }
@@ -296,6 +299,14 @@ PeerInteractionCommand::~PeerInteractionCommand()
 
 bool PeerInteractionCommand::executeInternal()
 {
+  const auto announcePortRevision =
+      getDownloadEngine()->getBtRegistry()->getAnnouncePortRevision(family_);
+  if (announcePortRevision_ != announcePortRevision) {
+    announcePortRevision_ = announcePortRevision;
+    btInteractive_->updateAdvertisedPort(
+        getDownloadEngine()->getBtRegistry()->getAnnouncePort(family_));
+  }
+  btInteractive_->flushAdvertisedPortUpdate();
   setNoCheck(false);
   bool done = false;
   while (!done) {

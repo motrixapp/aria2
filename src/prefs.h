@@ -485,6 +485,10 @@ extern PrefPtr PREF_BT_HASH_CHECK_SEED;
 extern PrefPtr PREF_BT_MAX_PEERS;
 // values: a string (IP address)
 extern PrefPtr PREF_BT_EXTERNAL_IP;
+// Internal marker: bt-external-ip was explicitly set for this download.
+extern PrefPtr PREF_BT_EXTERNAL_IP_OVERRIDE;
+// values: 1*digit
+extern PrefPtr PREF_BT_EXTERNAL_PORT;
 // values: 1*digit '=' a string that your file system recognizes as a file name.
 extern PrefPtr PREF_INDEX_OUT;
 // values: 1*digit

@@ -72,6 +72,10 @@ class RpcMethodTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testChangeOption_withNotAllowedOption);
   CPPUNIT_TEST(testChangeOption_withoutGid);
   CPPUNIT_TEST(testChangeGlobalOption);
+#ifdef ENABLE_BITTORRENT
+  CPPUNIT_TEST(testChangeGlobalOption_btExternalEndpoint);
+  CPPUNIT_TEST(testGetBtEndpoint);
+#endif // ENABLE_BITTORRENT
   CPPUNIT_TEST(testChangeGlobalOption_withBadOption);
   CPPUNIT_TEST(testChangeGlobalOption_withNotAllowedOption);
   CPPUNIT_TEST(testTellStatus_withoutGid);
@@ -161,6 +165,10 @@ public:
   void testChangeOption_withNotAllowedOption();
   void testChangeOption_withoutGid();
   void testChangeGlobalOption();
+#ifdef ENABLE_BITTORRENT
+  void testChangeGlobalOption_btExternalEndpoint();
+  void testGetBtEndpoint();
+#endif // ENABLE_BITTORRENT
   void testChangeGlobalOption_withBadOption();
   void testChangeGlobalOption_withNotAllowedOption();
   void testTellStatus_withoutGid();
@@ -290,16 +298,24 @@ void RpcMethodTest::testAddUri()
     // with options
     auto opt = Dict::g();
     opt->put(PREF_DIR->k, "/sink");
+#ifdef ENABLE_BITTORRENT
+    opt->put(PREF_BT_EXTERNAL_IP->k, "203.0.113.20");
+#endif // ENABLE_BITTORRENT
     req.params->append(std::move(opt));
     auto res = m.execute(std::move(req), e_.get());
     CPPUNIT_ASSERT_EQUAL(0, res.code);
     a2_gid_t gid;
     CPPUNIT_ASSERT_EQUAL(
         0, GroupId::toNumericId(gid, downcast<String>(res.param)->s().c_str()));
+    auto group = findReservedGroup(e_->getRequestGroupMan().get(), gid);
     CPPUNIT_ASSERT_EQUAL(std::string("/sink"),
-                         findReservedGroup(e_->getRequestGroupMan().get(), gid)
-                             ->getOption()
-                             ->get(PREF_DIR));
+                         group->getOption()->get(PREF_DIR));
+#ifdef ENABLE_BITTORRENT
+    CPPUNIT_ASSERT_EQUAL(std::string("203.0.113.20"),
+                         group->getOption()->get(PREF_BT_EXTERNAL_IP));
+    CPPUNIT_ASSERT(
+        group->getOption()->getAsBool(PREF_BT_EXTERNAL_IP_OVERRIDE));
+#endif // ENABLE_BITTORRENT
   }
 }
 
@@ -690,6 +706,7 @@ void RpcMethodTest::testChangeOption()
   opt->put(PREF_BT_MAX_PEERS->k, "100");
   opt->put(PREF_BT_REQUEST_PEER_SPEED_LIMIT->k, "300K");
   opt->put(PREF_MAX_UPLOAD_LIMIT->k, "50K");
+  opt->put(PREF_BT_EXTERNAL_IP->k, "203.0.113.21");
 
   {
     auto btObject = make_unique<BtObject>();
@@ -717,6 +734,9 @@ void RpcMethodTest::testChangeOption()
   CPPUNIT_ASSERT_EQUAL((int)50_k, group->getMaxUploadSpeedLimit());
   CPPUNIT_ASSERT_EQUAL(std::string("51200"),
                        option->get(PREF_MAX_UPLOAD_LIMIT));
+  CPPUNIT_ASSERT_EQUAL(std::string("203.0.113.21"),
+                       option->get(PREF_BT_EXTERNAL_IP));
+  CPPUNIT_ASSERT(option->getAsBool(PREF_BT_EXTERNAL_IP_OVERRIDE));
 #endif // ENABLE_BITTORRENT
 }
 
@@ -795,6 +815,102 @@ void RpcMethodTest::testChangeGlobalOption()
   CPPUNIT_ASSERT_EQUAL(std::string("1024"),
                        e_->getOption()->get(PREF_MAX_CONNECTION_PER_SERVER));
 }
+
+#ifdef ENABLE_BITTORRENT
+void RpcMethodTest::testChangeGlobalOption_btExternalEndpoint()
+{
+  ChangeGlobalOptionRpcMethod m;
+  e_->getBtRegistry()->setTcpPort(6881);
+  auto req = createReq(ChangeGlobalOptionRpcMethod::getMethodName());
+  auto opt = Dict::g();
+  opt->put(PREF_BT_EXTERNAL_IP->k, "203.0.113.7");
+  opt->put(PREF_BT_EXTERNAL_PORT->k, "62000");
+  req.params->append(std::move(opt));
+  auto res = m.execute(std::move(req), e_.get());
+
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+  CPPUNIT_ASSERT_EQUAL(std::string("203.0.113.7"),
+                       e_->getBtRegistry()->getExternalIp());
+  CPPUNIT_ASSERT_EQUAL((uint16_t)62000,
+                       e_->getBtRegistry()->getAnnouncePort());
+  CPPUNIT_ASSERT_EQUAL(std::string("62000"),
+                       e_->getOption()->get(PREF_BT_EXTERNAL_PORT));
+
+  req = createReq(ChangeGlobalOptionRpcMethod::getMethodName());
+  opt = Dict::g();
+  opt->put(PREF_BT_EXTERNAL_IP->k, "invalid");
+  req.params->append(std::move(opt));
+  res = m.execute(std::move(req), e_.get());
+  CPPUNIT_ASSERT_EQUAL(1, res.code);
+  CPPUNIT_ASSERT_EQUAL(std::string("203.0.113.7"),
+                       e_->getBtRegistry()->getExternalIp());
+  CPPUNIT_ASSERT_EQUAL(std::string("203.0.113.7"),
+                       e_->getOption()->get(PREF_BT_EXTERNAL_IP));
+
+  req = createReq(ChangeGlobalOptionRpcMethod::getMethodName());
+  opt = Dict::g();
+  opt->put(PREF_BT_EXTERNAL_IP->k, "");
+  opt->put(PREF_BT_EXTERNAL_PORT->k, "0");
+  req.params->append(std::move(opt));
+  res = m.execute(std::move(req), e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+  CPPUNIT_ASSERT(e_->getBtRegistry()->getExternalIp().empty());
+  CPPUNIT_ASSERT_EQUAL((uint16_t)6881,
+                       e_->getBtRegistry()->getAnnouncePort());
+}
+
+void RpcMethodTest::testGetBtEndpoint()
+{
+  e_->getBtRegistry()->setTcpPort(6881);
+  e_->getBtRegistry()->setExternalEndpoint("203.0.113.7", 62000);
+
+  GetBtEndpointRpcMethod m;
+  auto res = m.execute(createReq(GetBtEndpointRpcMethod::getMethodName()),
+                       e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+
+  const auto endpoint = downcast<Dict>(res.param);
+  CPPUNIT_ASSERT(endpoint);
+  CPPUNIT_ASSERT_EQUAL(std::string("6881"),
+                       getString(endpoint, "listenPort"));
+  CPPUNIT_ASSERT_EQUAL(std::string("62000"),
+                       getString(endpoint, "announcePort"));
+  CPPUNIT_ASSERT_EQUAL(std::string("203.0.113.7"),
+                       getString(endpoint, "externalIp"));
+  const auto ipv4 = downcast<Dict>(endpoint->get("ipv4"));
+  const auto ipv6 = downcast<Dict>(endpoint->get("ipv6"));
+  CPPUNIT_ASSERT(ipv4);
+  CPPUNIT_ASSERT(ipv6);
+  CPPUNIT_ASSERT_EQUAL(std::string("62000"),
+                       getString(ipv4, "announcePort"));
+  CPPUNIT_ASSERT_EQUAL(std::string("203.0.113.7"),
+                       getString(ipv4, "externalIp"));
+  CPPUNIT_ASSERT_EQUAL(std::string("6881"),
+                       getString(ipv6, "announcePort"));
+  CPPUNIT_ASSERT(getString(ipv6, "externalIp").empty());
+
+  e_->getBtRegistry()->setExternalEndpoint("2001:db8::7", 62000);
+  res = m.execute(createReq(GetBtEndpointRpcMethod::getMethodName()), e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+  const auto ipv6Endpoint = downcast<Dict>(res.param);
+  CPPUNIT_ASSERT_EQUAL(std::string("62000"),
+                       getString(ipv6Endpoint, "announcePort"));
+  CPPUNIT_ASSERT_EQUAL(
+      std::string("6881"),
+      getString(downcast<Dict>(ipv6Endpoint->get("ipv6")), "announcePort"));
+  CPPUNIT_ASSERT_EQUAL(
+      std::string("2001:db8::7"),
+      getString(downcast<Dict>(ipv6Endpoint->get("ipv6")), "externalIp"));
+
+  e_->getBtRegistry()->setExternalEndpoint("", 0);
+  res = m.execute(createReq(GetBtEndpointRpcMethod::getMethodName()), e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+  const auto fallbackEndpoint = downcast<Dict>(res.param);
+  CPPUNIT_ASSERT_EQUAL(std::string("6881"),
+                       getString(fallbackEndpoint, "announcePort"));
+  CPPUNIT_ASSERT(getString(fallbackEndpoint, "externalIp").empty());
+}
+#endif // ENABLE_BITTORRENT
 
 void RpcMethodTest::testChangeGlobalOption_withBadOption()
 {

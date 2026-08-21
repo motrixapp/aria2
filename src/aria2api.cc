@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "aria2api.h"
 
+#include <algorithm>
 #include <functional>
 
 #include "Platform.h"
@@ -213,6 +214,12 @@ void apiGatherRequestOption(Option* option, const KeyVals& options,
   apiGatherOption(options.begin(), options.end(),
                   std::mem_fn(&OptionHandler::getInitialOption), option,
                   optionParser);
+  if (std::find_if(options.begin(), options.end(),
+                   [](const KeyVals::value_type& entry) {
+                     return entry.first == PREF_BT_EXTERNAL_IP->k;
+                   }) != options.end()) {
+    option->put(PREF_BT_EXTERNAL_IP_OVERRIDE, A2_V_TRUE);
+  }
 }
 } // namespace
 
@@ -235,6 +242,12 @@ void apiGatherChangeableOptionForReserved(
   apiGatherOption(options.begin(), options.end(),
                   std::mem_fn(&OptionHandler::getChangeOptionForReserved),
                   option, optionParser);
+  if (std::find_if(options.begin(), options.end(),
+                   [](const KeyVals::value_type& entry) {
+                     return entry.first == PREF_BT_EXTERNAL_IP->k;
+                   }) != options.end()) {
+    option->put(PREF_BT_EXTERNAL_IP_OVERRIDE, A2_V_TRUE);
+  }
 }
 } // namespace
 

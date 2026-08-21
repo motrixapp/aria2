@@ -124,8 +124,7 @@ private:
   std::unique_ptr<AnnRequest> createHTTPAnnRequest(const std::string& uri);
 
   std::unique_ptr<AnnRequest> createUDPAnnRequest(const std::string& host,
-                                                  uint16_t port,
-                                                  uint16_t localPort);
+                                                  uint16_t port);
 
   void addConnection();
 

@@ -47,7 +47,13 @@
 
 namespace aria2 {
 
-BtRegistry::BtRegistry() : tcpPort_{0}, udpPort_{0} {}
+BtRegistry::BtRegistry()
+    : announcePortState_{std::make_shared<BtAnnouncePortState>()},
+      announcePortRevision4_{0},
+      announcePortRevision6_{0},
+      udpPort_{0}
+{
+}
 
 const std::shared_ptr<DownloadContext>&
 BtRegistry::getDownloadContext(a2_gid_t gid) const
@@ -75,6 +81,10 @@ BtRegistry::getDownloadContext(const std::string& infoHash) const
 
 void BtRegistry::put(a2_gid_t gid, std::unique_ptr<BtObject> obj)
 {
+  if (obj->btAnnounce) {
+    obj->btAnnounce->setEndpoint(externalIp_, getAnnouncePort(AF_INET),
+                                 getAnnouncePort(AF_INET6));
+  }
   pool_[gid] = std::move(obj);
 }
 
@@ -92,6 +102,47 @@ BtObject* BtRegistry::get(a2_gid_t gid) const
 bool BtRegistry::remove(a2_gid_t gid) { return pool_.erase(gid); }
 
 void BtRegistry::removeAll() { pool_.clear(); }
+
+void BtRegistry::setTcpPort(uint16_t port)
+{
+  if (getTcpPort() == port) {
+    return;
+  }
+  const auto previousAnnouncePort4 = getAnnouncePort(AF_INET);
+  const auto previousAnnouncePort6 = getAnnouncePort(AF_INET6);
+  announcePortState_->tcpPort_ = port;
+  if (previousAnnouncePort4 != getAnnouncePort(AF_INET)) {
+    ++announcePortRevision4_;
+  }
+  if (previousAnnouncePort6 != getAnnouncePort(AF_INET6)) {
+    ++announcePortRevision6_;
+  }
+  for (auto& entry : pool_) {
+    if (entry.second->btAnnounce) {
+      entry.second->btAnnounce->setEndpoint(
+          externalIp_, getAnnouncePort(AF_INET), getAnnouncePort(AF_INET6));
+    }
+  }
+}
+
+void BtRegistry::setExternalEndpoint(std::string ip, uint16_t port)
+{
+  if (externalIp_ == ip && getExternalPort() == port) {
+    return;
+  }
+  const auto previousAnnouncePort4 = getAnnouncePort(AF_INET);
+  externalIp_ = std::move(ip);
+  announcePortState_->externalPort4_ = port;
+  if (previousAnnouncePort4 != getAnnouncePort(AF_INET)) {
+    ++announcePortRevision4_;
+  }
+  for (auto& entry : pool_) {
+    if (entry.second->btAnnounce) {
+      entry.second->btAnnounce->setEndpoint(
+          externalIp_, getAnnouncePort(AF_INET), getAnnouncePort(AF_INET6));
+    }
+  }
+}
 
 void BtRegistry::setLpdMessageReceiver(
     const std::shared_ptr<LpdMessageReceiver>& receiver)

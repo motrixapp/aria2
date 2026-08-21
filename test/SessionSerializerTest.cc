@@ -42,8 +42,11 @@ void SessionSerializerTest::testSave()
   std::vector<std::shared_ptr<RequestGroup>> result;
   std::shared_ptr<Option> option(new Option());
   option->put(PREF_DIR, "/tmp");
+  option->put(PREF_BT_EXTERNAL_IP, "203.0.113.1");
   createRequestGroupForUri(result, option, uris);
   CPPUNIT_ASSERT_EQUAL((size_t)5, result.size());
+  result[1]->getOption()->put(PREF_BT_EXTERNAL_IP, "203.0.113.2");
+  result[1]->getOption()->put(PREF_BT_EXTERNAL_IP_OVERRIDE, A2_V_TRUE);
   result[4]->getOption()->put(PREF_PAUSE, A2_V_TRUE);
   option->put(PREF_MAX_DOWNLOAD_RESULT, "10");
   RequestGroupMan rgman{result, 1, option.get()};
@@ -112,6 +115,8 @@ void SessionSerializerTest::testSave()
       fmt(" gid=%s", GroupId::toHex(result[1]->getGID()).c_str()), line);
   std::getline(ss, line);
   CPPUNIT_ASSERT_EQUAL(std::string(" dir=/tmp"), line);
+  std::getline(ss, line);
+  CPPUNIT_ASSERT_EQUAL(std::string(" bt-external-ip=203.0.113.2"), line);
   std::getline(ss, line);
   CPPUNIT_ASSERT_EQUAL(uris[3], line);
   std::getline(ss, line);

@@ -269,6 +269,7 @@ Usage: #{program_name} addUri URI... [options]
        #{program_name} getFiles   GID [options]
        #{program_name} getUris    GID [options]
        #{program_name} getPeers   GID [options]
+       #{program_name} getBtEndpoint [options]
        #{program_name} getServers GID [options]
        #{program_name} purgeDownloadResult [options]
        #{program_name} removeDownloadResult GID [options]
@@ -394,6 +395,8 @@ elsif command == "getUris" then
   result=client_call(client, secret, "aria2."+command, resources[0])
 elsif command == "getPeers" then
   result=client_call(client, secret, "aria2."+command, resources[0])
+elsif command == "getBtEndpoint" then
+  result=client_call(client, secret, "aria2."+command)
 elsif command == "getServers" then
   result=client_call(client, secret, "aria2."+command, resources[0])
 elsif command == "purgeDownloadResult" then

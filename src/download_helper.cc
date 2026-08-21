@@ -546,6 +546,9 @@ bool createRequestGroupFromUriListParser(
         requestOption->put(pref, tempOption.get(pref));
       }
     }
+    if (tempOption.defined(PREF_BT_EXTERNAL_IP)) {
+      requestOption->put(PREF_BT_EXTERNAL_IP_OVERRIDE, A2_V_TRUE);
+    }
     // This does not throw exception because throwOnError = false.
     createRequestGroupForUri(result, requestOption, uris);
     if (num < result.size()) {

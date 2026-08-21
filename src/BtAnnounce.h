@@ -70,8 +70,8 @@ public:
   virtual std::string getAnnounceUrl() = 0;
 
   virtual std::shared_ptr<UDPTrackerRequest>
-  createUDPTrackerRequest(const std::string& remoteAddr, uint16_t remotePort,
-                          uint16_t localPort) = 0;
+  createUDPTrackerRequest(const std::string& remoteAddr,
+                          uint16_t remotePort) = 0;
 
   /**
    * Tells that the announce process has just started.
@@ -119,7 +119,9 @@ public:
 
   virtual void overrideMinInterval(std::chrono::seconds interval) = 0;
 
-  virtual void setTcpPort(uint16_t port) = 0;
+  virtual void setEndpoint(const std::string& externalIp,
+                           uint16_t announcePort4,
+                           uint16_t announcePort6) = 0;
 
   static const std::string FAILURE_REASON;
 

@@ -14,6 +14,11 @@
 #include "BtPortMessage.h"
 #include "Exception.h"
 #include "FileEntry.h"
+#include "DefaultBtInteractive.h"
+#include "MockBtMessageDispatcher.h"
+#include "ExtensionMessageRegistry.h"
+#include "HandshakeExtensionMessage.h"
+#include "wallclock.h"
 
 namespace aria2 {
 
@@ -22,6 +27,8 @@ class DefaultBtMessageFactoryTest : public CppUnit::TestFixture {
   CPPUNIT_TEST_SUITE(DefaultBtMessageFactoryTest);
   CPPUNIT_TEST(testCreateBtMessage_BtExtendedMessage);
   CPPUNIT_TEST(testCreatePortMessage);
+  CPPUNIT_TEST(testAdvertisedPortBeforeExtendedHandshake);
+  CPPUNIT_TEST(testAdvertisedPortUpdatesAreCoalesced);
   CPPUNIT_TEST_SUITE_END();
 
 private:
@@ -49,6 +56,8 @@ public:
 
   void testCreateBtMessage_BtExtendedMessage();
   void testCreatePortMessage();
+  void testAdvertisedPortBeforeExtendedHandshake();
+  void testAdvertisedPortUpdatesAreCoalesced();
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION(DefaultBtMessageFactoryTest);
@@ -96,6 +105,88 @@ void DefaultBtMessageFactoryTest::testCreatePortMessage()
     auto m = factory_->createPortMessage(6881);
     CPPUNIT_ASSERT_EQUAL((uint16_t)6881, m->getPort());
   }
+}
+
+void DefaultBtMessageFactoryTest::testAdvertisedPortBeforeExtendedHandshake()
+{
+  auto dctx = std::make_shared<DownloadContext>();
+  dctx->setAttribute(CTX_ATTR_BT, make_unique<TorrentAttribute>());
+  auto peer = std::make_shared<Peer>("192.168.0.1", 6969);
+  peer->allocateSessionResource(1_k, 1_m);
+
+  DefaultBtInteractive interactive(dctx, peer);
+  interactive.enableMetadataGetMode();
+
+  auto dispatcher = make_unique<MockBtMessageDispatcher>();
+  auto dispatcherPtr = dispatcher.get();
+  auto factory = make_unique<DefaultBtMessageFactory>();
+  factory->setDownloadContext(dctx.get());
+  factory->setPeer(peer);
+  factory->setBtMessageDispatcher(dispatcherPtr);
+  interactive.setDispatcher(std::move(dispatcher));
+  interactive.setBtMessageFactory(std::move(factory));
+  interactive.setExtensionMessageRegistry(
+      make_unique<ExtensionMessageRegistry>());
+
+  interactive.updateAdvertisedPort(62000);
+  CPPUNIT_ASSERT(dispatcherPtr->messageQueue.empty());
+
+  peer->setExtendedMessagingEnabled(true);
+  interactive.doPostHandshakeProcessing();
+  CPPUNIT_ASSERT_EQUAL((size_t)1, dispatcherPtr->messageQueue.size());
+
+  auto extended = dynamic_cast<BtExtendedMessage*>(
+      dispatcherPtr->messageQueue.front().get());
+  CPPUNIT_ASSERT(extended);
+  auto handshake = dynamic_cast<HandshakeExtensionMessage*>(
+      extended->getExtensionMessage().get());
+  CPPUNIT_ASSERT(handshake);
+  CPPUNIT_ASSERT_EQUAL((uint16_t)62000, handshake->getTCPPort());
+}
+
+void DefaultBtMessageFactoryTest::testAdvertisedPortUpdatesAreCoalesced()
+{
+  auto dctx = std::make_shared<DownloadContext>();
+  dctx->setAttribute(CTX_ATTR_BT, make_unique<TorrentAttribute>());
+  auto peer = std::make_shared<Peer>("192.168.0.1", 6969);
+  peer->allocateSessionResource(1_k, 1_m);
+  peer->setExtendedMessagingEnabled(true);
+
+  DefaultBtInteractive interactive(dctx, peer);
+  auto dispatcher = make_unique<MockBtMessageDispatcher>();
+  auto dispatcherPtr = dispatcher.get();
+  auto factory = make_unique<DefaultBtMessageFactory>();
+  factory->setDownloadContext(dctx.get());
+  factory->setPeer(peer);
+  factory->setBtMessageDispatcher(dispatcherPtr);
+  interactive.setDispatcher(std::move(dispatcher));
+  interactive.setBtMessageFactory(std::move(factory));
+  interactive.setExtensionMessageRegistry(
+      make_unique<ExtensionMessageRegistry>());
+
+  interactive.updateAdvertisedPort(62000);
+  CPPUNIT_ASSERT_EQUAL((size_t)1, dispatcherPtr->messageQueue.size());
+
+  interactive.updateAdvertisedPort(62001);
+  interactive.updateAdvertisedPort(62000);
+  CPPUNIT_ASSERT_EQUAL((size_t)1, dispatcherPtr->messageQueue.size());
+
+  interactive.updateAdvertisedPort(62001);
+  interactive.updateAdvertisedPort(62002);
+  CPPUNIT_ASSERT_EQUAL((size_t)1, dispatcherPtr->messageQueue.size());
+
+  global::wallclock().advance(5_s);
+  interactive.flushAdvertisedPortUpdate();
+  global::wallclock().sub(5_s);
+  CPPUNIT_ASSERT_EQUAL((size_t)2, dispatcherPtr->messageQueue.size());
+
+  auto extended = dynamic_cast<BtExtendedMessage*>(
+      dispatcherPtr->messageQueue.back().get());
+  CPPUNIT_ASSERT(extended);
+  auto handshake = dynamic_cast<HandshakeExtensionMessage*>(
+      extended->getExtensionMessage().get());
+  CPPUNIT_ASSERT(handshake);
+  CPPUNIT_ASSERT_EQUAL((uint16_t)62002, handshake->getTCPPort());
 }
 
 } // namespace aria2

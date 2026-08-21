@@ -65,9 +65,21 @@ private:
   std::shared_ptr<BtRuntime> btRuntime_;
   std::shared_ptr<PieceStorage> pieceStorage_;
   std::shared_ptr<PeerStorage> peerStorage_;
-  uint16_t tcpPort_;
+  std::string externalIp_;
+  uint16_t announcePort4_;
+  uint16_t announcePort6_;
+  std::string lastAnnouncedExternalIp_;
+  uint16_t lastAnnouncedPort4_;
+  uint16_t lastAnnouncedPort6_;
+  bool endpointInitialized_;
+  bool endpointAnnounced_;
+  bool endpointRefreshPending_;
+  Timer endpointChangedTimer_;
+  std::chrono::seconds endpointRefreshDelay_;
 
   bool adjustAnnounceList();
+
+  uint16_t getHTTPTrackerAnnouncePort() const;
 
 public:
   DefaultBtAnnounce(DownloadContext* downloadContext, const Option* option);
@@ -103,8 +115,8 @@ public:
   virtual std::string getAnnounceUrl() CXX11_OVERRIDE;
 
   virtual std::shared_ptr<UDPTrackerRequest>
-  createUDPTrackerRequest(const std::string& remoteAddr, uint16_t remotePort,
-                          uint16_t localPort) CXX11_OVERRIDE;
+  createUDPTrackerRequest(const std::string& remoteAddr,
+                          uint16_t remotePort) CXX11_OVERRIDE;
 
   virtual void announceStart() CXX11_OVERRIDE;
 
@@ -130,7 +142,9 @@ public:
   virtual void
   overrideMinInterval(std::chrono::seconds interval) CXX11_OVERRIDE;
 
-  virtual void setTcpPort(uint16_t port) CXX11_OVERRIDE { tcpPort_ = port; }
+  virtual void setEndpoint(const std::string& externalIp,
+                           uint16_t announcePort4,
+                           uint16_t announcePort6) CXX11_OVERRIDE;
 
   void setRandomizer(Randomizer* randomizer);
 

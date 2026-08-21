@@ -116,6 +116,10 @@ bool writeOption(IOFile& fp, const std::shared_ptr<Option>& op)
   for (size_t i = 1, len = option::countOption(); i < len; ++i) {
     PrefPtr pref = option::i2p(i);
     const OptionHandler* h = oparser->find(pref);
+    if (pref == PREF_BT_EXTERNAL_IP &&
+        !op->getAsBool(PREF_BT_EXTERNAL_IP_OVERRIDE)) {
+      continue;
+    }
     if (h && h->getInitialOption() && op->definedLocal(pref)) {
       if (h->getCumulative()) {
         const std::string& val = op->get(pref);

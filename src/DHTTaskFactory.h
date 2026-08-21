@@ -46,6 +46,7 @@ class PeerStorage;
 class DHTTask;
 class DHTNode;
 class DHTBucket;
+class BtAnnouncePortState;
 
 class DHTTaskFactory {
 public:
@@ -62,7 +63,9 @@ public:
 
   virtual std::shared_ptr<DHTTask>
   createPeerLookupTask(const std::shared_ptr<DownloadContext>& ctx,
-                       uint16_t tcpPort,
+                       const std::shared_ptr<const BtAnnouncePortState>&
+                           announcePortState,
+                       int family,
                        const std::shared_ptr<PeerStorage>& peerStorage) = 0;
 
   virtual std::shared_ptr<DHTTask>

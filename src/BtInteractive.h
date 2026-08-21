@@ -69,6 +69,10 @@ public:
   virtual size_t countReceivedMessageInIteration() const = 0;
 
   virtual size_t countOutstandingRequest() = 0;
+
+  virtual void updateAdvertisedPort(uint16_t port) = 0;
+
+  virtual void flushAdvertisedPortUpdate() = 0;
 };
 
 } // namespace aria2

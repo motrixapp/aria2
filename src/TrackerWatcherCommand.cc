@@ -307,11 +307,9 @@ TrackerWatcherCommand::createAnnounce(DownloadEngine* e)
       std::unique_ptr<AnnRequest> treq;
       if (udpTrackerClient_ &&
           uri::getFieldString(res, USR_SCHEME, uri.c_str()) == "udp") {
-        uint16_t localPort;
-        localPort = e->getBtRegistry()->getTcpPort();
         treq =
             createUDPAnnRequest(uri::getFieldString(res, USR_HOST, uri.c_str()),
-                                res.port, localPort);
+                                res.port);
       }
       else {
         treq = createHTTPAnnRequest(btAnnounce_->getAnnounceUrl());
@@ -331,9 +329,9 @@ TrackerWatcherCommand::createAnnounce(DownloadEngine* e)
 
 std::unique_ptr<AnnRequest>
 TrackerWatcherCommand::createUDPAnnRequest(const std::string& host,
-                                           uint16_t port, uint16_t localPort)
+                                           uint16_t port)
 {
-  auto req = btAnnounce_->createUDPTrackerRequest(host, port, localPort);
+  auto req = btAnnounce_->createUDPTrackerRequest(host, port);
   req->user_data = this;
 
   return make_unique<UDPAnnRequest>(std::move(req));

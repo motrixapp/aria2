@@ -47,6 +47,7 @@
 #include "DHTNodeLookupEntry.h"
 #include "PeerStorage.h"
 #include "DHTMessageCallback.h"
+#include "BtRegistry.h"
 
 namespace aria2 {
 
@@ -87,10 +88,13 @@ std::shared_ptr<DHTTask> DHTTaskFactoryImpl::createBucketRefreshTask()
 }
 
 std::shared_ptr<DHTTask> DHTTaskFactoryImpl::createPeerLookupTask(
-    const std::shared_ptr<DownloadContext>& ctx, uint16_t tcpPort,
+    const std::shared_ptr<DownloadContext>& ctx,
+    const std::shared_ptr<const BtAnnouncePortState>& announcePortState,
+    int family,
     const std::shared_ptr<PeerStorage>& peerStorage)
 {
-  auto task = std::make_shared<DHTPeerLookupTask>(ctx, tcpPort);
+  auto task =
+      std::make_shared<DHTPeerLookupTask>(ctx, announcePortState, family);
   // TODO this may be not freed by RequestGroup::releaseRuntimeResource()
   task->setPeerStorage(peerStorage);
   setCommonProperty(task);

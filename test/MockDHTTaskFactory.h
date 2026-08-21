@@ -28,7 +28,9 @@ public:
   }
 
   virtual std::shared_ptr<DHTTask> createPeerLookupTask(
-      const std::shared_ptr<DownloadContext>& ctx, uint16_t tcpPort,
+      const std::shared_ptr<DownloadContext>& ctx,
+      const std::shared_ptr<const BtAnnouncePortState>& announcePortState,
+      int family,
       const std::shared_ptr<PeerStorage>& peerStorage) CXX11_OVERRIDE
   {
     return nullptr;

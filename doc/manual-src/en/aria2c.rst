@@ -694,12 +694,23 @@ BitTorrent Specific Options
 
 .. option:: --bt-external-ip=<IPADDRESS>
 
-  Specify the external IP address to use in BitTorrent download and DHT.
-  It may be sent to BitTorrent tracker. For DHT, this option should be
-  set to report that local node is downloading a particular torrent.
-  This is critical to use DHT in a private network. Although this
-  function is named ``external``, it can accept any kind of IP
-  addresses.
+  Specify the external IP address announced to BitTorrent trackers and DHT.
+  The value must be a numeric IPv4 or IPv6 address. When set globally, it is
+  the session-wide default and can be changed through
+  :func:`aria2.changeGlobalOption`. A value supplied as a per-download option
+  overrides that global default for the affected BitTorrent download. Private
+  torrents are not exposed as local peers through DHT.
+
+.. option:: --bt-external-port=<PORT>
+
+  Specify the session-wide external IPv4 TCP BitTorrent peer port announced to
+  IPv4 trackers, IPv4 DHT, and IPv4 peers that support the extension protocol.
+  ``0`` announces the active :option:`--listen-port`. IPv6 announcements keep
+  using the active local listen port because an IPv4 NAT port mapping does not
+  describe an IPv6 endpoint. A nonzero value overrides only the announced IPv4
+  port; it does not rebind local listeners or affect Local Peer Discovery. This
+  option can be changed through :func:`aria2.changeGlobalOption`.
+  Default: ``0``
 
 .. option:: --bt-force-encryption [true|false]
 
@@ -3064,6 +3075,31 @@ For information on the *secret* parameter, see :ref:`rpc_auth`.
       'seeder': 'false,
       'uploadSpeed': '6890'}]
 
+.. function:: aria2.getBtEndpoint([secret])
+
+  This method returns the active session-wide BitTorrent endpoints. Port and IP
+  values are strings. The top-level fields are retained for compatibility:
+  their port is the legacy primary IPv4 value, while ``externalIp`` remains the
+  configured address of either family.
+
+  ``listenPort``
+    The local TCP port currently accepting incoming BitTorrent connections.
+    ``0`` means that no BitTorrent listener is active.
+
+  ``announcePort``
+    The effective IPv4 BitTorrent peer port. This is
+    :option:`--bt-external-port` when it is nonzero, otherwise ``listenPort``.
+
+  ``externalIp``
+    The numeric external IP address configured by
+    :option:`--bt-external-ip`, or an empty string when no override is active.
+
+  ``ipv4`` and ``ipv6``
+    Structs containing ``listenPort``, ``announcePort``, and ``externalIp`` for
+    each address family. ``ipv4.announcePort`` applies the external IPv4 port;
+    ``ipv6.announcePort`` remains the local listen port. ``externalIp`` is only
+    populated in the struct matching the configured address family.
+
 .. function:: aria2.getServers([secret], gid)
 
   This method returns currently connected HTTP(S)/FTP/SFTP servers of
@@ -3381,6 +3417,8 @@ For information on the *secret* parameter, see :ref:`rpc_auth`.
   This method changes global options dynamically.  *options* is a struct.
   The following options are available:
 
+  * :option:`bt-external-ip <--bt-external-ip>`
+  * :option:`bt-external-port <--bt-external-port>`
   * :option:`bt-max-open-files <--bt-max-open-files>`
   * :option:`download-result <--download-result>`
   * :option:`keep-unfinished-download-result <--keep-unfinished-download-result>`

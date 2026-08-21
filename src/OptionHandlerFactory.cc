@@ -1534,6 +1534,13 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
     handlers.push_back(op);
   }
   {
+    OptionHandler* op(new NumberOptionHandler(
+        PREF_BT_EXTERNAL_PORT, TEXT_BT_EXTERNAL_PORT, "0", 0, UINT16_MAX));
+    op->addTag(TAG_BITTORRENT);
+    op->setChangeGlobalOption(true);
+    handlers.push_back(op);
+  }
+  {
     OptionHandler* op(new BooleanOptionHandler(
         PREF_BT_FORCE_ENCRYPTION, TEXT_BT_FORCE_ENCRYPTION, A2_V_FALSE,
         OptionHandler::OPT_ARG));

@@ -44,6 +44,7 @@ class DownloadContext;
 class Peer;
 class PeerStorage;
 class DHTGetPeersReplyMessage;
+class BtAnnouncePortState;
 
 class DHTPeerLookupTask
     : public DHTAbstractNodeLookupTask<DHTGetPeersReplyMessage> {
@@ -51,11 +52,19 @@ private:
   std::map<std::string, std::string> tokenStorage_;
 
   std::shared_ptr<PeerStorage> peerStorage_;
-  uint16_t tcpPort_;
+
+  std::shared_ptr<const BtAnnouncePortState> announcePortState_;
+
+  int family_;
+
+protected:
+  uint16_t getAnnouncePort() const;
 
 public:
   DHTPeerLookupTask(const std::shared_ptr<DownloadContext>& downloadContext,
-                    uint16_t tcpPort);
+                    const std::shared_ptr<const BtAnnouncePortState>&
+                        announcePortState,
+                    int family);
 
   virtual void
   getNodesFromMessage(std::vector<std::shared_ptr<DHTNode>>& nodes,

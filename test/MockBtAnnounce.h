@@ -10,6 +10,9 @@ private:
   bool announceReady;
   std::string announceUrl;
   std::string peerId;
+  std::string externalIp;
+  uint16_t announcePort4 = 0;
+  uint16_t announcePort6 = 0;
 
 public:
   MockBtAnnounce() {}
@@ -22,8 +25,8 @@ public:
   virtual std::string getAnnounceUrl() CXX11_OVERRIDE { return announceUrl; }
 
   virtual std::shared_ptr<UDPTrackerRequest>
-  createUDPTrackerRequest(const std::string& remoteAddr, uint16_t remotePort,
-                          uint16_t localPort) CXX11_OVERRIDE
+  createUDPTrackerRequest(const std::string& remoteAddr,
+                          uint16_t remotePort) CXX11_OVERRIDE
   {
     return nullptr;
   }
@@ -59,7 +62,22 @@ public:
   {
   }
 
-  virtual void setTcpPort(uint16_t port) CXX11_OVERRIDE {}
+  virtual void setEndpoint(const std::string& externalIp,
+                           uint16_t announcePort4,
+                           uint16_t announcePort6) CXX11_OVERRIDE
+  {
+    this->externalIp = externalIp;
+    this->announcePort4 = announcePort4;
+    this->announcePort6 = announcePort6;
+  }
+
+  const std::string& getExternalIp() const { return externalIp; }
+
+  uint16_t getAnnouncePort() const { return announcePort4; }
+
+  uint16_t getAnnouncePort4() const { return announcePort4; }
+
+  uint16_t getAnnouncePort6() const { return announcePort6; }
 
   void setPeerId(const std::string& peerId) { this->peerId = peerId; }
 };

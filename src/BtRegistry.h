@@ -39,8 +39,10 @@
 
 #include <map>
 #include <memory>
+#include <string>
 
 #include "RequestGroup.h"
+#include "a2netcompat.h"
 
 namespace aria2 {
 
@@ -52,6 +54,29 @@ class BtProgressInfoFile;
 class DownloadContext;
 class LpdMessageReceiver;
 class UDPTrackerClient;
+
+class BtAnnouncePortState {
+  friend class BtRegistry;
+
+private:
+  uint16_t tcpPort_;
+  uint16_t externalPort4_;
+
+public:
+  BtAnnouncePortState() : tcpPort_{0}, externalPort4_{0} {}
+
+  uint16_t getTcpPort() const { return tcpPort_; }
+
+  uint16_t getExternalPort4() const { return externalPort4_; }
+
+  uint16_t getAnnouncePort(int family) const
+  {
+    if (family == AF_INET6) {
+      return tcpPort_;
+    }
+    return externalPort4_ == 0 ? tcpPort_ : externalPort4_;
+  }
+};
 
 struct BtObject {
   std::shared_ptr<DownloadContext> downloadContext;
@@ -74,7 +99,10 @@ struct BtObject {
 class BtRegistry {
 private:
   std::map<a2_gid_t, std::unique_ptr<BtObject>> pool_;
-  uint16_t tcpPort_;
+  std::shared_ptr<BtAnnouncePortState> announcePortState_;
+  std::string externalIp_;
+  uint64_t announcePortRevision4_;
+  uint64_t announcePortRevision6_;
   // This is UDP port for DHT and UDP tracker. But currently UDP
   // tracker is not supported in IPv6.
   uint16_t udpPort_;
@@ -107,8 +135,42 @@ public:
 
   bool remove(a2_gid_t gid);
 
-  void setTcpPort(uint16_t port) { tcpPort_ = port; }
-  uint16_t getTcpPort() const { return tcpPort_; }
+  void setTcpPort(uint16_t port);
+  uint16_t getTcpPort() const { return announcePortState_->getTcpPort(); }
+
+  // The no-argument form is the primary IPv4 tracker endpoint retained for
+  // compatibility with the original scalar API.
+  uint16_t getAnnouncePort() const { return getAnnouncePort(AF_INET); }
+
+  uint16_t getAnnouncePort(int family) const
+  {
+    return announcePortState_->getAnnouncePort(family);
+  }
+
+  const std::string& getExternalIp() const { return externalIp_; }
+
+  uint16_t getExternalPort() const
+  {
+    return announcePortState_->getExternalPort4();
+  }
+
+  uint64_t getAnnouncePortRevision() const
+  {
+    return getAnnouncePortRevision(AF_INET);
+  }
+
+  uint64_t getAnnouncePortRevision(int family) const
+  {
+    return family == AF_INET6 ? announcePortRevision6_
+                              : announcePortRevision4_;
+  }
+
+  std::shared_ptr<const BtAnnouncePortState> getAnnouncePortState() const
+  {
+    return announcePortState_;
+  }
+
+  void setExternalEndpoint(std::string ip, uint16_t port);
 
   void setUdpPort(uint16_t port) { udpPort_ = port; }
   uint16_t getUdpPort() const { return udpPort_; }

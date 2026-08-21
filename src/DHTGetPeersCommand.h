@@ -37,6 +37,7 @@
 
 #include "Command.h"
 
+#include <chrono>
 #include <memory>
 
 #include "TimerA2.h"
@@ -48,7 +49,6 @@ class DHTTaskQueue;
 class DHTTaskFactory;
 class DHTTask;
 class DownloadEngine;
-class RequestGroup;
 class BtRuntime;
 class PeerStorage;
 
@@ -72,9 +72,25 @@ private:
 
   Timer lastGetPeerTime_;
 
+  Timer lastPeerLookupTime_;
+
+  int family_;
+
+  uint64_t announcePortRevision_;
+
+  uint16_t lastPeerLookupPort_;
+
+  uint16_t pendingAnnouncePort_;
+
+  bool endpointRefreshPending_;
+
+  Timer endpointChangedTimer_;
+
+  std::chrono::seconds endpointRefreshDelay_;
+
 public:
   DHTGetPeersCommand(cuid_t cuid, RequestGroup* requestGroup,
-                     DownloadEngine* e);
+                     DownloadEngine* e, int family);
 
   virtual ~DHTGetPeersCommand();
 

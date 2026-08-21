@@ -65,17 +65,30 @@ constexpr auto GET_PEER_INTERVAL_RETRY = 5_s;
 // Maximum retries. Try more than 5 to drop bad node.
 const int MAX_RETRIES = 10;
 
+constexpr auto ENDPOINT_REFRESH_DEBOUNCE = 5_s;
+constexpr auto ENDPOINT_REFRESH_MAX_JITTER = 11;
+constexpr auto ENDPOINT_REFRESH_MIN_INTERVAL = 60_s;
+
 } // namespace
 
 DHTGetPeersCommand::DHTGetPeersCommand(cuid_t cuid, RequestGroup* requestGroup,
-                                       DownloadEngine* e)
+                                       DownloadEngine* e, int family)
     : Command{cuid},
       requestGroup_{requestGroup},
       e_{e},
       taskQueue_{nullptr},
       taskFactory_{nullptr},
       numRetry_{0},
-      lastGetPeerTime_{Timer::zero()}
+      lastGetPeerTime_{Timer::zero()},
+      lastPeerLookupTime_{Timer::zero()},
+      family_{family},
+      announcePortRevision_{
+          e->getBtRegistry()->getAnnouncePortRevision(family)},
+      lastPeerLookupPort_{e->getBtRegistry()->getAnnouncePort(family)},
+      pendingAnnouncePort_{lastPeerLookupPort_},
+      endpointRefreshPending_{false},
+      endpointChangedTimer_{Timer::zero()},
+      endpointRefreshDelay_{ENDPOINT_REFRESH_DEBOUNCE}
 {
   requestGroup_->increaseNumCommand();
 }
@@ -90,8 +103,33 @@ bool DHTGetPeersCommand::execute()
   if (btRuntime_->isHalt()) {
     return true;
   }
-  auto elapsed = lastGetPeerTime_.difference(global::wallclock());
-  if (!task_ && (elapsed >= GET_PEER_INTERVAL ||
+  const auto announcePortRevision =
+      e_->getBtRegistry()->getAnnouncePortRevision(family_);
+  if (announcePortRevision_ != announcePortRevision) {
+    announcePortRevision_ = announcePortRevision;
+    const auto announcePort =
+        e_->getBtRegistry()->getAnnouncePort(family_);
+    if (announcePort == lastPeerLookupPort_) {
+      endpointRefreshPending_ = false;
+    }
+    else if (!endpointRefreshPending_ ||
+             pendingAnnouncePort_ != announcePort) {
+      pendingAnnouncePort_ = announcePort;
+      endpointRefreshPending_ = true;
+      endpointChangedTimer_ = global::wallclock();
+      endpointRefreshDelay_ =
+          ENDPOINT_REFRESH_DEBOUNCE + std::chrono::seconds(
+                                          requestGroup_->getGID() %
+                                          ENDPOINT_REFRESH_MAX_JITTER);
+    }
+  }
+  const auto& now = global::wallclock();
+  auto elapsed = lastGetPeerTime_.difference(now);
+  const auto endpointRefreshReady =
+      endpointRefreshPending_ &&
+      endpointChangedTimer_.difference(now) >= endpointRefreshDelay_ &&
+      lastPeerLookupTime_.difference(now) >= ENDPOINT_REFRESH_MIN_INTERVAL;
+  if (!task_ && (endpointRefreshReady || elapsed >= GET_PEER_INTERVAL ||
                  (((btRuntime_->lessThanMinPeers() &&
                     ((numRetry_ && elapsed >= GET_PEER_INTERVAL_RETRY) ||
                      elapsed >= GET_PEER_INTERVAL_LOW)) ||
@@ -102,13 +140,18 @@ bool DHTGetPeersCommand::execute()
             bittorrent::getInfoHashString(requestGroup_->getDownloadContext())
                 .c_str()));
     task_ = taskFactory_->createPeerLookupTask(
-        requestGroup_->getDownloadContext(), e_->getBtRegistry()->getTcpPort(),
-        peerStorage_);
+        requestGroup_->getDownloadContext(),
+        e_->getBtRegistry()->getAnnouncePortState(), family_, peerStorage_);
     taskQueue_->addPeriodicTask2(task_);
+    lastPeerLookupTime_ = now;
+    endpointRefreshPending_ = false;
   }
   else if (task_ && task_->finished()) {
     A2_LOG_DEBUG("task finished detected");
     lastGetPeerTime_ = global::wallclock();
+    lastPeerLookupPort_ = e_->getBtRegistry()->getAnnouncePort(family_);
+    pendingAnnouncePort_ = lastPeerLookupPort_;
+    endpointRefreshPending_ = false;
     if (numRetry_ < MAX_RETRIES &&
         (btRuntime_->getMaxPeers() == 0 ||
          btRuntime_->getMaxPeers() >

@@ -137,7 +137,8 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
   if (metadataGetMode || !torrentAttrs->privateTorrent) {
     if (DHTRegistry::isInitialized()) {
       auto command =
-          make_unique<DHTGetPeersCommand>(e->newCUID(), requestGroup, e);
+          make_unique<DHTGetPeersCommand>(e->newCUID(), requestGroup, e,
+                                          AF_INET);
       command->setTaskQueue(DHTRegistry::getData().taskQueue.get());
       command->setTaskFactory(DHTRegistry::getData().taskFactory.get());
       command->setBtRuntime(btRuntime);
@@ -146,7 +147,8 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
     }
     if (DHTRegistry::isInitialized6()) {
       auto command =
-          make_unique<DHTGetPeersCommand>(e->newCUID(), requestGroup, e);
+          make_unique<DHTGetPeersCommand>(e->newCUID(), requestGroup, e,
+                                          AF_INET6);
       command->setTaskQueue(DHTRegistry::getData6().taskQueue.get());
       command->setTaskFactory(DHTRegistry::getData6().taskFactory.get());
       command->setBtRuntime(btRuntime);
@@ -181,6 +183,17 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
       commands.push_back(std::move(c));
     }
   }
+  const auto& externalIp = e->getOption()->get(PREF_BT_EXTERNAL_IP);
+  const auto& effectiveExternalIp =
+      option->getAsBool(PREF_BT_EXTERNAL_IP_OVERRIDE)
+          ? option->get(PREF_BT_EXTERNAL_IP)
+          : externalIp;
+  if (!effectiveExternalIp.empty()) {
+    unsigned char address[16];
+    if (net::getBinAddr(address, effectiveExternalIp) == 0) {
+      throw DL_ABORT_EX(_("BitTorrent external IP address is invalid."));
+    }
+  }
   if (btReg->getTcpPort() == 0) {
     static int families[] = {AF_INET, AF_INET6};
     size_t familiesLength =
@@ -212,7 +225,11 @@ void BtSetup::setup(std::vector<std::unique_ptr<Command>>& commands,
       throw DL_ABORT_EX(_("Errors occurred while binding port.\n"));
     }
   }
-  btAnnounce->setTcpPort(btReg->getTcpPort());
+  btReg->setExternalEndpoint(
+      externalIp, e->getOption()->getAsInt(PREF_BT_EXTERNAL_PORT));
+  btAnnounce->setEndpoint(btReg->getExternalIp(),
+                          btReg->getAnnouncePort(AF_INET),
+                          btReg->getAnnouncePort(AF_INET6));
 
   if (option->getAsBool(PREF_BT_ENABLE_LPD) && btReg->getTcpPort() &&
       (metadataGetMode || !torrentAttrs->privateTorrent)) {

@@ -68,6 +68,10 @@ private:
   Seq sequence_;
   std::unique_ptr<BtInteractive> btInteractive_;
 
+  int family_;
+
+  uint64_t announcePortRevision_;
+
   const std::shared_ptr<Option>& getOption() const;
 
 protected:

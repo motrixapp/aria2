@@ -207,6 +207,7 @@ aria2c_SOURCES += BtAllowedFastMessageTest.cc\
 	DHTRoutingTableSerializerTest.cc\
 	DHTRoutingTableDeserializerTest.cc\
 	DHTTaskExecutorTest.cc\
+	DHTPeerLookupTaskTest.cc\
 	DHKeyExchangeTest.cc\
 	ARC4Test.cc\
 	MSEHandshakeTest.cc\

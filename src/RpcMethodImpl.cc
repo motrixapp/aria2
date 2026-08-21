@@ -77,6 +77,7 @@
 #  include "Peer.h"
 #  include "BtRuntime.h"
 #  include "BtAnnounce.h"
+#  include "SocketCore.h"
 #endif // ENABLE_BITTORRENT
 #include "CheckIntegrityEntry.h"
 #ifdef HAVE_SQLITE3
@@ -1092,6 +1093,36 @@ std::unique_ptr<ValueBase> GetPeersRpcMethod::process(const RpcRequest& req,
     gatherPeer(peers.get(), btObject->peerStorage);
   }
   return std::move(peers);
+}
+
+std::unique_ptr<ValueBase>
+GetBtEndpointRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
+{
+  const auto& registry = e->getBtRegistry();
+  const auto& externalIp = registry->getExternalIp();
+  unsigned char address[16];
+  const auto externalIpLength =
+      externalIp.empty() ? 0 : net::getBinAddr(address, externalIp);
+
+  auto result = Dict::g();
+  result->put("listenPort", util::uitos(registry->getTcpPort()));
+  result->put("announcePort", util::uitos(registry->getAnnouncePort()));
+  result->put("externalIp", externalIp);
+
+  auto ipv4 = Dict::g();
+  ipv4->put("listenPort", util::uitos(registry->getTcpPort()));
+  ipv4->put("announcePort",
+            util::uitos(registry->getAnnouncePort(AF_INET)));
+  ipv4->put("externalIp", externalIpLength == 4 ? externalIp : A2STR::NIL);
+  result->put("ipv4", std::move(ipv4));
+
+  auto ipv6 = Dict::g();
+  ipv6->put("listenPort", util::uitos(registry->getTcpPort()));
+  ipv6->put("announcePort",
+            util::uitos(registry->getAnnouncePort(AF_INET6)));
+  ipv6->put("externalIp", externalIpLength == 16 ? externalIp : A2STR::NIL);
+  result->put("ipv6", std::move(ipv6));
+  return std::move(result);
 }
 #endif // ENABLE_BITTORRENT
 
@@ -2207,6 +2238,26 @@ void changeOption(const std::shared_ptr<RequestGroup>& group,
 
 void changeGlobalOption(const Option& option, DownloadEngine* e)
 {
+#ifdef ENABLE_BITTORRENT
+  const auto endpointChanged = option.defined(PREF_BT_EXTERNAL_IP) ||
+                               option.defined(PREF_BT_EXTERNAL_PORT);
+  const auto externalIp = option.defined(PREF_BT_EXTERNAL_IP)
+                              ? option.get(PREF_BT_EXTERNAL_IP)
+                              : e->getOption()->get(PREF_BT_EXTERNAL_IP);
+  const auto externalPort = option.defined(PREF_BT_EXTERNAL_PORT)
+                                ? option.getAsInt(PREF_BT_EXTERNAL_PORT)
+                                : e->getOption()->getAsInt(
+                                      PREF_BT_EXTERNAL_PORT);
+  if (endpointChanged && !externalIp.empty()) {
+    unsigned char address[16];
+    if (net::getBinAddr(address, externalIp) == 0) {
+      throw DL_ABORT_EX("BitTorrent external IP address is invalid.");
+    }
+  }
+  if (endpointChanged) {
+    e->getBtRegistry()->setExternalEndpoint(externalIp, externalPort);
+  }
+#endif // ENABLE_BITTORRENT
   e->getOption()->merge(option);
   if (option.defined(PREF_MAX_OVERALL_DOWNLOAD_LIMIT)) {
     e->getRequestGroupMan()->setMaxOverallDownloadSpeedLimit(

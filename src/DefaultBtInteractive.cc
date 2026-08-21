@@ -84,6 +84,10 @@
 
 namespace aria2 {
 
+namespace {
+constexpr auto ADVERTISED_PORT_UPDATE_MIN_INTERVAL = 5_s;
+} // namespace
+
 DefaultBtInteractive::DefaultBtInteractive(
     const std::shared_ptr<DownloadContext>& downloadContext,
     const std::shared_ptr<Peer>& peer)
@@ -105,7 +109,10 @@ DefaultBtInteractive::DefaultBtInteractive(
       numReceivedMessage_(0),
       maxOutstandingRequest_(DEFAULT_MAX_OUTSTANDING_REQUEST),
       requestGroupMan_(nullptr),
-      tcpPort_(0)
+      advertisedPort_(0),
+      lastAdvertisedPort_(0),
+      advertisedPortUpdateTimer_(Timer::zero()),
+      advertisedPortUpdatePending_(false)
 {
 }
 
@@ -200,7 +207,7 @@ void DefaultBtInteractive::addHandshakeExtendedMessageToQueue()
 {
   auto m = make_unique<HandshakeExtensionMessage>();
   m->setClientVersion(bittorrent::getStaticPeerAgent());
-  m->setTCPPort(tcpPort_);
+  m->setTCPPort(advertisedPort_);
   m->setExtensions(extensionMessageRegistry_->getExtensions());
   auto attrs = bittorrent::getTorrentAttrs(downloadContext_);
   if (!attrs->metadata.empty()) {
@@ -208,6 +215,9 @@ void DefaultBtInteractive::addHandshakeExtendedMessageToQueue()
   }
   dispatcher_->addMessageToQueue(
       messageFactory_->createBtExtendedMessage(std::move(m)));
+  lastAdvertisedPort_ = advertisedPort_;
+  advertisedPortUpdateTimer_ = global::wallclock();
+  advertisedPortUpdatePending_ = false;
 }
 
 void DefaultBtInteractive::addBitfieldMessageToQueue()
@@ -228,6 +238,37 @@ void DefaultBtInteractive::addBitfieldMessageToQueue()
       dispatcher_->addMessageToQueue(messageFactory_->createBitfieldMessage());
     }
   }
+}
+
+void DefaultBtInteractive::updateAdvertisedPort(uint16_t port)
+{
+  if (advertisedPort_ == port) {
+    return;
+  }
+  advertisedPort_ = port;
+  if (peer_->isExtendedMessagingEnabled()) {
+    advertisedPortUpdatePending_ = advertisedPort_ != lastAdvertisedPort_;
+    flushAdvertisedPortUpdate();
+  }
+}
+
+void DefaultBtInteractive::flushAdvertisedPortUpdate()
+{
+  if (!advertisedPortUpdatePending_ ||
+      !peer_->isExtendedMessagingEnabled()) {
+    return;
+  }
+  if (advertisedPort_ == lastAdvertisedPort_) {
+    advertisedPortUpdatePending_ = false;
+    return;
+  }
+  if (advertisedPortUpdateTimer_.difference(global::wallclock()) <
+      ADVERTISED_PORT_UPDATE_MIN_INTERVAL) {
+    return;
+  }
+  // BEP 10 permits repeated handshakes, but receivers may ignore them. Keep
+  // this best-effort update bounded and advertise only the latest endpoint.
+  addHandshakeExtendedMessageToQueue();
 }
 
 void DefaultBtInteractive::addAllowedFastMessageToQueue()

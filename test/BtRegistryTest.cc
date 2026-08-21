@@ -23,6 +23,7 @@ class BtRegistryTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testGetAllDownloadContext);
   CPPUNIT_TEST(testRemove);
   CPPUNIT_TEST(testRemoveAll);
+  CPPUNIT_TEST(testExternalEndpoint);
   CPPUNIT_TEST_SUITE_END();
 
 private:
@@ -32,6 +33,7 @@ public:
   void testGetAllDownloadContext();
   void testRemove();
   void testRemoveAll();
+  void testExternalEndpoint();
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION(BtRegistryTest);
@@ -107,6 +109,69 @@ void BtRegistryTest::testRemoveAll()
   btRegistry.removeAll();
   CPPUNIT_ASSERT(!btRegistry.get(1));
   CPPUNIT_ASSERT(!btRegistry.get(2));
+}
+
+void BtRegistryTest::testExternalEndpoint()
+{
+  BtRegistry btRegistry;
+  btRegistry.setTcpPort(6881);
+  CPPUNIT_ASSERT_EQUAL((uint16_t)6881,
+                       btRegistry.getAnnouncePort(AF_INET));
+  CPPUNIT_ASSERT_EQUAL((uint16_t)6881,
+                       btRegistry.getAnnouncePort(AF_INET6));
+  CPPUNIT_ASSERT_EQUAL((uint64_t)1,
+                       btRegistry.getAnnouncePortRevision(AF_INET));
+  CPPUNIT_ASSERT_EQUAL((uint64_t)1,
+                       btRegistry.getAnnouncePortRevision(AF_INET6));
+
+  auto announce = std::make_shared<MockBtAnnounce>();
+  auto btObject = make_unique<BtObject>();
+  btObject->btAnnounce = announce;
+  btRegistry.put(1, std::move(btObject));
+  CPPUNIT_ASSERT_EQUAL((uint16_t)6881, announce->getAnnouncePort4());
+  CPPUNIT_ASSERT_EQUAL((uint16_t)6881, announce->getAnnouncePort6());
+
+  btRegistry.setExternalEndpoint("203.0.113.7", 62000);
+  CPPUNIT_ASSERT_EQUAL(std::string("203.0.113.7"),
+                       btRegistry.getExternalIp());
+  CPPUNIT_ASSERT_EQUAL((uint16_t)62000,
+                       btRegistry.getAnnouncePort(AF_INET));
+  CPPUNIT_ASSERT_EQUAL((uint16_t)6881,
+                       btRegistry.getAnnouncePort(AF_INET6));
+  CPPUNIT_ASSERT_EQUAL((uint64_t)2,
+                       btRegistry.getAnnouncePortRevision(AF_INET));
+  CPPUNIT_ASSERT_EQUAL((uint64_t)1,
+                       btRegistry.getAnnouncePortRevision(AF_INET6));
+  CPPUNIT_ASSERT_EQUAL(std::string("203.0.113.7"),
+                       announce->getExternalIp());
+  CPPUNIT_ASSERT_EQUAL((uint16_t)62000, announce->getAnnouncePort4());
+  CPPUNIT_ASSERT_EQUAL((uint16_t)6881, announce->getAnnouncePort6());
+
+  btRegistry.setExternalEndpoint("203.0.113.8", 62000);
+  CPPUNIT_ASSERT_EQUAL((uint64_t)2,
+                       btRegistry.getAnnouncePortRevision(AF_INET));
+  CPPUNIT_ASSERT_EQUAL((uint64_t)1,
+                       btRegistry.getAnnouncePortRevision(AF_INET6));
+
+  btRegistry.setTcpPort(6882);
+  CPPUNIT_ASSERT_EQUAL((uint64_t)2,
+                       btRegistry.getAnnouncePortRevision(AF_INET));
+  CPPUNIT_ASSERT_EQUAL((uint64_t)2,
+                       btRegistry.getAnnouncePortRevision(AF_INET6));
+  CPPUNIT_ASSERT_EQUAL((uint16_t)62000, announce->getAnnouncePort4());
+  CPPUNIT_ASSERT_EQUAL((uint16_t)6882, announce->getAnnouncePort6());
+
+  btRegistry.setExternalEndpoint("", 0);
+  CPPUNIT_ASSERT_EQUAL((uint16_t)6882,
+                       btRegistry.getAnnouncePort(AF_INET));
+  CPPUNIT_ASSERT_EQUAL((uint16_t)6882,
+                       btRegistry.getAnnouncePort(AF_INET6));
+  CPPUNIT_ASSERT_EQUAL((uint64_t)3,
+                       btRegistry.getAnnouncePortRevision(AF_INET));
+  CPPUNIT_ASSERT_EQUAL((uint64_t)2,
+                       btRegistry.getAnnouncePortRevision(AF_INET6));
+  CPPUNIT_ASSERT_EQUAL((uint16_t)6882, announce->getAnnouncePort4());
+  CPPUNIT_ASSERT_EQUAL((uint16_t)6882, announce->getAnnouncePort6());
 }
 
 } // namespace aria2

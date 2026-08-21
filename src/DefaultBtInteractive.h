@@ -144,7 +144,10 @@ private:
 
   RequestGroupMan* requestGroupMan_;
 
-  uint16_t tcpPort_;
+  uint16_t advertisedPort_;
+  uint16_t lastAdvertisedPort_;
+  Timer advertisedPortUpdateTimer_;
+  bool advertisedPortUpdatePending_;
 
   void addBitfieldMessageToQueue();
   void addAllowedFastMessageToQueue();
@@ -239,7 +242,9 @@ public:
 
   void enableMetadataGetMode() { metadataGetMode_ = true; }
 
-  void setTcpPort(uint16_t port) { tcpPort_ = port; }
+  virtual void updateAdvertisedPort(uint16_t port) CXX11_OVERRIDE;
+
+  virtual void flushAdvertisedPortUpdate() CXX11_OVERRIDE;
 };
 
 } // namespace aria2

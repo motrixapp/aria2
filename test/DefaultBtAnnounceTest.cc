@@ -20,6 +20,7 @@
 #include "array_fun.h"
 #include "UDPTrackerRequest.h"
 #include "SocketCore.h"
+#include "wallclock.h"
 
 namespace aria2 {
 
@@ -29,6 +30,9 @@ class DefaultBtAnnounceTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testGetAnnounceUrl);
   CPPUNIT_TEST(testGetAnnounceUrl_withQuery);
   CPPUNIT_TEST(testGetAnnounceUrl_externalIP);
+  CPPUNIT_TEST(testEndpointFamilySelection);
+  CPPUNIT_TEST(testEndpointRefreshDuringAnnounce);
+  CPPUNIT_TEST(testEndpointRefreshCancellation);
   CPPUNIT_TEST(testNoMoreAnnounce);
   CPPUNIT_TEST(testIsAllAnnounceFailed);
   CPPUNIT_TEST(testURLOrderInStoppedEvent);
@@ -86,6 +90,9 @@ public:
   void testGetAnnounceUrl();
   void testGetAnnounceUrl_withQuery();
   void testGetAnnounceUrl_externalIP();
+  void testEndpointFamilySelection();
+  void testEndpointRefreshDuringAnnounce();
+  void testEndpointRefreshCancellation();
   void testNoMoreAnnounce();
   void testIsAllAnnounceFailed();
   void testURLOrderInStoppedEvent();
@@ -153,7 +160,7 @@ void DefaultBtAnnounceTest::testNoMoreAnnounce()
   btAnnounce.setPeerStorage(peerStorage_);
   btAnnounce.setBtRuntime(btRuntime_);
   btAnnounce.setRandomizer(randomizer_.get());
-  btAnnounce.setTcpPort(6989);
+  btAnnounce.setEndpoint("", 6989, 6989);
 
   CPPUNIT_ASSERT_EQUAL(
       std::string("http://localhost/"
@@ -249,7 +256,7 @@ void DefaultBtAnnounceTest::testGetAnnounceUrl()
   btAnnounce.setPeerStorage(peerStorage_);
   btAnnounce.setBtRuntime(btRuntime_);
   btAnnounce.setRandomizer(randomizer_.get());
-  btAnnounce.setTcpPort(6989);
+  btAnnounce.setEndpoint("", 6989, 6989);
   std::shared_ptr<UDPTrackerRequest> req;
 
   CPPUNIT_ASSERT_EQUAL(
@@ -260,7 +267,7 @@ void DefaultBtAnnounceTest::testGetAnnounceUrl()
                   "numwant=50&no_peer_id=1&port=6989&event=started&"
                   "supportcrypto=1"),
       btAnnounce.getAnnounceUrl());
-  req = btAnnounce.createUDPTrackerRequest("localhost", 80, 6989);
+  req = btAnnounce.createUDPTrackerRequest("localhost", 80);
   CPPUNIT_ASSERT_EQUAL(std::string("localhost"), req->remoteAddr);
   CPPUNIT_ASSERT_EQUAL((uint16_t)80, req->remotePort);
   CPPUNIT_ASSERT_EQUAL((int)UDPT_ACT_ANNOUNCE, req->action);
@@ -285,7 +292,7 @@ void DefaultBtAnnounceTest::testGetAnnounceUrl()
                   "downloaded=1310720&left=1572864&compact=1&key=fastdltl&"
                   "numwant=50&no_peer_id=1&port=6989&supportcrypto=1"),
       btAnnounce.getAnnounceUrl());
-  req = btAnnounce.createUDPTrackerRequest("localhost", 80, 6989);
+  req = btAnnounce.createUDPTrackerRequest("localhost", 80);
   CPPUNIT_ASSERT_EQUAL((int)UDPT_ACT_ANNOUNCE, req->action);
   CPPUNIT_ASSERT_EQUAL((int)UDPT_EVT_NONE, req->event);
 
@@ -301,7 +308,7 @@ void DefaultBtAnnounceTest::testGetAnnounceUrl()
                   "numwant=50&no_peer_id=1&port=6989&event=completed&"
                   "supportcrypto=1"),
       btAnnounce.getAnnounceUrl());
-  req = btAnnounce.createUDPTrackerRequest("localhost", 80, 6989);
+  req = btAnnounce.createUDPTrackerRequest("localhost", 80);
   CPPUNIT_ASSERT_EQUAL((int)UDPT_ACT_ANNOUNCE, req->action);
   CPPUNIT_ASSERT_EQUAL((int)UDPT_EVT_COMPLETED, req->event);
 
@@ -317,7 +324,7 @@ void DefaultBtAnnounceTest::testGetAnnounceUrl()
                   "numwant=0&no_peer_id=1&port=6989&event=stopped&"
                   "supportcrypto=1"),
       btAnnounce.getAnnounceUrl());
-  req = btAnnounce.createUDPTrackerRequest("localhost", 80, 6989);
+  req = btAnnounce.createUDPTrackerRequest("localhost", 80);
   CPPUNIT_ASSERT_EQUAL((int)UDPT_ACT_ANNOUNCE, req->action);
   CPPUNIT_ASSERT_EQUAL((int)UDPT_EVT_STOPPED, req->event);
 }
@@ -333,7 +340,7 @@ void DefaultBtAnnounceTest::testGetAnnounceUrl_withQuery()
   btAnnounce.setPeerStorage(peerStorage_);
   btAnnounce.setBtRuntime(btRuntime_);
   btAnnounce.setRandomizer(randomizer_.get());
-  btAnnounce.setTcpPort(6989);
+  btAnnounce.setEndpoint("", 6989, 6989);
 
   CPPUNIT_ASSERT_EQUAL(
       std::string(
@@ -353,12 +360,13 @@ void DefaultBtAnnounceTest::testGetAnnounceUrl_externalIP()
   setAnnounceList(dctx_, announceList.get());
 
   option_->put(PREF_BT_EXTERNAL_IP, "192.168.1.1");
+  option_->put(PREF_BT_EXTERNAL_IP_OVERRIDE, A2_V_TRUE);
   DefaultBtAnnounce btAnnounce(dctx_.get(), option_);
   btAnnounce.setPieceStorage(pieceStorage_);
   btAnnounce.setPeerStorage(peerStorage_);
   btAnnounce.setBtRuntime(btRuntime_);
   btAnnounce.setRandomizer(randomizer_.get());
-  btAnnounce.setTcpPort(6989);
+  btAnnounce.setEndpoint("203.0.113.1", 6989, 6989);
 
   CPPUNIT_ASSERT_EQUAL(
       std::string(
@@ -371,11 +379,92 @@ void DefaultBtAnnounceTest::testGetAnnounceUrl_externalIP()
       btAnnounce.getAnnounceUrl());
 
   std::shared_ptr<UDPTrackerRequest> req;
-  req = btAnnounce.createUDPTrackerRequest("localhost", 80, 6989);
+  req = btAnnounce.createUDPTrackerRequest("localhost", 80);
   char host[NI_MAXHOST];
   int rv = inetNtop(AF_INET, &req->ip, host, sizeof(host));
   CPPUNIT_ASSERT_EQUAL(0, rv);
   CPPUNIT_ASSERT_EQUAL(std::string("192.168.1.1"), std::string(host));
+}
+
+void DefaultBtAnnounceTest::testEndpointRefreshDuringAnnounce()
+{
+  auto announceList = List::g();
+  announceList->append(createAnnounceTier("http://localhost/announce"));
+  setAnnounceList(dctx_, announceList.get());
+
+  DefaultBtAnnounce btAnnounce(dctx_.get(), option_);
+  btAnnounce.setPieceStorage(pieceStorage_);
+  btAnnounce.setPeerStorage(peerStorage_);
+  btAnnounce.setBtRuntime(btRuntime_);
+  btAnnounce.setRandomizer(randomizer_.get());
+  btAnnounce.setEndpoint("", 6989, 6989);
+
+  CPPUNIT_ASSERT(btAnnounce.isAnnounceReady());
+  CPPUNIT_ASSERT(btAnnounce.getAnnounceUrl().find("port=6989") !=
+                 std::string::npos);
+  btAnnounce.announceStart();
+  btAnnounce.setEndpoint("203.0.113.1", 62000, 6989);
+  btAnnounce.announceSuccess();
+  btAnnounce.resetAnnounce();
+
+  CPPUNIT_ASSERT(!btAnnounce.isAnnounceReady());
+  global::wallclock().advance(61_s);
+  CPPUNIT_ASSERT(!btAnnounce.isAnnounceReady());
+  global::wallclock().advance(60_s);
+  CPPUNIT_ASSERT(btAnnounce.isAnnounceReady());
+  const auto uri = btAnnounce.getAnnounceUrl();
+  CPPUNIT_ASSERT(uri.find("port=62000") != std::string::npos);
+  CPPUNIT_ASSERT(uri.find("ip=203.0.113.1") != std::string::npos);
+  global::wallclock().sub(121_s);
+}
+
+void DefaultBtAnnounceTest::testEndpointFamilySelection()
+{
+  auto announceList = List::g();
+  announceList->append(createAnnounceTier("http://localhost/announce"));
+  setAnnounceList(dctx_, announceList.get());
+
+  DefaultBtAnnounce btAnnounce(dctx_.get(), option_);
+  btAnnounce.setPieceStorage(pieceStorage_);
+  btAnnounce.setPeerStorage(peerStorage_);
+  btAnnounce.setBtRuntime(btRuntime_);
+  btAnnounce.setRandomizer(randomizer_.get());
+  btAnnounce.setEndpoint("2001:db8::7", 62000, 6881);
+
+  const auto uri = btAnnounce.getAnnounceUrl();
+  CPPUNIT_ASSERT(uri.find("port=6881") != std::string::npos);
+  CPPUNIT_ASSERT(uri.find("ip=2001:db8::7") != std::string::npos);
+
+  const auto req = btAnnounce.createUDPTrackerRequest("localhost", 80);
+  CPPUNIT_ASSERT_EQUAL((uint16_t)62000, req->port);
+  CPPUNIT_ASSERT_EQUAL((uint32_t)0, req->ip);
+}
+
+void DefaultBtAnnounceTest::testEndpointRefreshCancellation()
+{
+  auto announceList = List::g();
+  announceList->append(createAnnounceTier("http://localhost/announce"));
+  setAnnounceList(dctx_, announceList.get());
+
+  DefaultBtAnnounce btAnnounce(dctx_.get(), option_);
+  btAnnounce.setPieceStorage(pieceStorage_);
+  btAnnounce.setPeerStorage(peerStorage_);
+  btAnnounce.setBtRuntime(btRuntime_);
+  btAnnounce.setRandomizer(randomizer_.get());
+  btAnnounce.setUserDefinedInterval(10_min);
+  btAnnounce.setEndpoint("203.0.113.1", 62000, 6881);
+
+  CPPUNIT_ASSERT(btAnnounce.isAnnounceReady());
+  btAnnounce.getAnnounceUrl();
+  btAnnounce.announceStart();
+  btAnnounce.announceSuccess();
+  btAnnounce.resetAnnounce();
+
+  btAnnounce.setEndpoint("203.0.113.2", 62001, 6881);
+  btAnnounce.setEndpoint("203.0.113.1", 62000, 6881);
+  global::wallclock().advance(121_s);
+  CPPUNIT_ASSERT(!btAnnounce.isAnnounceReady());
+  global::wallclock().sub(121_s);
 }
 
 void DefaultBtAnnounceTest::testIsAllAnnounceFailed()
@@ -390,7 +479,7 @@ void DefaultBtAnnounceTest::testIsAllAnnounceFailed()
   btAnnounce.setPeerStorage(peerStorage_);
   btAnnounce.setBtRuntime(btRuntime_);
   btAnnounce.setRandomizer(randomizer_.get());
-  btAnnounce.setTcpPort(6989);
+  btAnnounce.setEndpoint("", 6989, 6989);
 
   CPPUNIT_ASSERT_EQUAL(
       std::string("http://localhost/"
@@ -437,7 +526,7 @@ void DefaultBtAnnounceTest::testURLOrderInStoppedEvent()
   btAnnounce.setPeerStorage(peerStorage_);
   btAnnounce.setBtRuntime(btRuntime_);
   btAnnounce.setRandomizer(randomizer_.get());
-  btAnnounce.setTcpPort(6989);
+  btAnnounce.setEndpoint("", 6989, 6989);
 
   CPPUNIT_ASSERT_EQUAL(
       std::string("http://localhost1/"
@@ -489,7 +578,7 @@ void DefaultBtAnnounceTest::testURLOrderInCompletedEvent()
   btAnnounce.setPeerStorage(peerStorage_);
   btAnnounce.setBtRuntime(btRuntime_);
   btAnnounce.setRandomizer(randomizer_.get());
-  btAnnounce.setTcpPort(6989);
+  btAnnounce.setEndpoint("", 6989, 6989);
 
   CPPUNIT_ASSERT_EQUAL(
       std::string("http://localhost1/"

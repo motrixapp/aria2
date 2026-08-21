@@ -49,8 +49,10 @@
 #include "util.h"
 #include "BtRegistry.h"
 #include "DownloadContext.h"
+#include "RequestGroup.h"
 #include "Option.h"
 #include "SocketCore.h"
+#include "bittorrent_helper.h"
 
 namespace aria2 {
 
@@ -84,9 +86,19 @@ void DHTGetPeersMessage::addLocalPeer(std::vector<std::shared_ptr<Peer>>& peers)
     return;
   }
 
-  auto group = dctx->getOwnerRequestGroup();
-  auto& option = group->getOption();
-  auto& externalIP = option->get(PREF_BT_EXTERNAL_IP);
+  if (bittorrent::getTorrentAttrs(dctx)->privateTorrent) {
+    return;
+  }
+
+  const auto* group = dctx->getOwnerRequestGroup();
+  if (!group) {
+    return;
+  }
+  const auto& option = group->getOption();
+  const auto& externalIP =
+      option->getAsBool(PREF_BT_EXTERNAL_IP_OVERRIDE)
+          ? option->get(PREF_BT_EXTERNAL_IP)
+          : btRegistry_->getExternalIp();
 
   if (externalIP.empty()) {
     return;
@@ -97,7 +109,7 @@ void DHTGetPeersMessage::addLocalPeer(std::vector<std::shared_ptr<Peer>>& peers)
     return;
   }
 
-  auto tcpPort = btRegistry_->getTcpPort();
+  auto tcpPort = btRegistry_->getAnnouncePort(family_);
   if (std::find_if(std::begin(peers), std::end(peers),
                    [&externalIP, tcpPort](const std::shared_ptr<Peer>& peer) {
                      return peer->getIPAddress() == externalIP &&

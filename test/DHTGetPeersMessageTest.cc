@@ -115,17 +115,17 @@ void DHTGetPeersMessageTest::testDoReceivedAction()
   dctx->setAttribute(CTX_ATTR_BT, torrentAttrs);
 
   auto option = std::make_shared<Option>();
-  option->put(PREF_BT_EXTERNAL_IP, "192.168.0.1");
 
   auto gid = GroupId::create();
   RequestGroup group(gid, option);
   dctx->setOwnerRequestGroup(&group);
 
   BtRegistry btReg;
+  btReg.setTcpPort(6881);
   btReg.put(
       gid->getNumericId(),
       make_unique<BtObject>(dctx, nullptr, nullptr, nullptr, nullptr, nullptr));
-  btReg.setTcpPort(6890);
+  btReg.setExternalEndpoint("192.168.0.1", 6890);
 
   DHTGetPeersMessage msg(localNode_, remoteNode_, infoHash, transactionID);
   msg.setRoutingTable(&routingTable);
@@ -172,7 +172,44 @@ void DHTGetPeersMessageTest::testDoReceivedAction()
       CPPUNIT_ASSERT_EQUAL(std::string("192.168.0.1"), peer->getIPAddress());
       CPPUNIT_ASSERT_EQUAL((uint16_t)6890, peer->getPort());
     }
+
+    dispatcher.messageQueue_.clear();
+    torrentAttrs->privateTorrent = true;
+    msg.doReceivedAction();
+    m = dynamic_cast<DHTGetPeersReplyMessage*>(
+        dispatcher.messageQueue_[0].message_.get());
+    CPPUNIT_ASSERT_EQUAL((size_t)2, m->getValues().size());
+
+    dispatcher.messageQueue_.clear();
+    torrentAttrs->privateTorrent = false;
+    option->put(PREF_BT_EXTERNAL_IP, "192.168.0.2");
+    option->put(PREF_BT_EXTERNAL_IP_OVERRIDE, A2_V_TRUE);
+    msg.doReceivedAction();
+    m = dynamic_cast<DHTGetPeersReplyMessage*>(
+        dispatcher.messageQueue_[0].message_.get());
+    CPPUNIT_ASSERT_EQUAL((size_t)3, m->getValues().size());
+    CPPUNIT_ASSERT_EQUAL(std::string("192.168.0.2"),
+                         m->getValues()[2]->getIPAddress());
+    CPPUNIT_ASSERT_EQUAL((uint16_t)6890, m->getValues()[2]->getPort());
   }
+
+  dispatcher.messageQueue_.clear();
+  option->put(PREF_BT_EXTERNAL_IP_OVERRIDE, A2_V_FALSE);
+  btReg.setExternalEndpoint("2001:db8::1", 62000);
+  msg.setFamily(AF_INET6);
+  {
+    DHTPeerAnnounceStorage peerAnnounceStorage;
+    msg.setPeerAnnounceStorage(&peerAnnounceStorage);
+    msg.doReceivedAction();
+
+    auto m = dynamic_cast<DHTGetPeersReplyMessage*>(
+        dispatcher.messageQueue_[0].message_.get());
+    CPPUNIT_ASSERT_EQUAL((size_t)1, m->getValues().size());
+    CPPUNIT_ASSERT_EQUAL(std::string("2001:db8::1"),
+                         m->getValues()[0]->getIPAddress());
+    CPPUNIT_ASSERT_EQUAL((uint16_t)6881, m->getValues()[0]->getPort());
+  }
+
   msg.setBtRegistry(nullptr);
   dispatcher.messageQueue_.clear();
   {
