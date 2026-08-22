@@ -45,6 +45,9 @@
 #       LDFLAGS. $PREFIX/lib/pkgconfig will be set to
 #       PKG_CONFIG_LIBDIR.
 #
+# TLS_BACKEND: TLS implementation used by aria2. Supported values are
+#       openssl (the release default) and wintls (CI/compatibility builds).
+#
 # In this configuration, the following dependent libraries are used:
 #
 # * c-ares
@@ -58,6 +61,20 @@
 
 test -z "$HOST" && HOST=i686-w64-mingw32
 test -z "$PREFIX" && PREFIX=/usr/local/$HOST
+test -z "$TLS_BACKEND" && TLS_BACKEND=openssl
+
+case "$TLS_BACKEND" in
+openssl)
+  TLS_OPTIONS="--without-wintls --with-openssl"
+  ;;
+wintls)
+  TLS_OPTIONS="--with-wintls --without-openssl"
+  ;;
+*)
+  echo "Unsupported TLS_BACKEND: $TLS_BACKEND" >&2
+  exit 1
+  ;;
+esac
 
 ./configure \
     --host=$HOST \
@@ -65,9 +82,8 @@ test -z "$PREFIX" && PREFIX=/usr/local/$HOST
     --without-included-gettext \
     --disable-nls \
     --with-libcares \
-    --without-wintls \
     --without-gnutls \
-    --with-openssl \
+    $TLS_OPTIONS \
     --with-sqlite3 \
     --without-libxml2 \
     --with-libexpat \

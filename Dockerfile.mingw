@@ -151,9 +151,17 @@ COPY . /aria2
 WORKDIR /aria2
 RUN autoreconf -fi
 
-RUN ./mingw-config && \
-    grep -q '^#define HAVE_OPENSSL 1' config.h && \
-    ! grep -q '^#define HAVE_WINTLS 1' config.h && \
+# Release builds use OpenSSL. Declare this argument next to the only layer it
+# affects so WinTLS compatibility builds can reuse all dependency layers.
+ARG TLS_BACKEND=openssl
+RUN TLS_BACKEND="$TLS_BACKEND" ./mingw-config && \
+    case "$TLS_BACKEND" in \
+      openssl) grep -q '^#define HAVE_OPENSSL 1' config.h && \
+               ! grep -q '^#define HAVE_WINTLS 1' config.h ;; \
+      wintls)  grep -q '^#define HAVE_WINTLS 1' config.h && \
+               ! grep -q '^#define HAVE_OPENSSL 1' config.h ;; \
+      *) echo "Unsupported TLS_BACKEND: $TLS_BACKEND" >&2; exit 1 ;; \
+    esac && \
     make -j$(nproc) && \
     $HOST-strip src/aria2c.exe && \
     ! $HOST-objdump -p src/aria2c.exe | grep -Eiq \

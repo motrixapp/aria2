@@ -112,6 +112,9 @@ void FeatureConfigTest::testUsedLibs()
   CPPUNIT_ASSERT(usedLibs().find("OpenSSL/" OPENSSL_VERSION_STR) !=
                  std::string::npos);
 #endif // HAVE_OPENSSL && OPENSSL_VERSION_NUMBER >= 0x30000000L
+#ifdef HAVE_WINTLS
+  CPPUNIT_ASSERT(usedLibs().find("WinTLS") != std::string::npos);
+#endif // HAVE_WINTLS
 }
 
 } // namespace aria2

@@ -537,9 +537,13 @@ ssize_t WinTLSSession::readData(void* data, size_t len)
     }
 
     if (status_ == SEC_I_RENEGOTIATE) {
-      // Renegotiation basically means performing another handshake
-      state_ = st_initialized;
-      A2_LOG_INFO("WinTLS: Renegotiate");
+      // Schannel also uses SEC_I_RENEGOTIATE for TLS 1.3 post-handshake
+      // messages.  Continue with the existing security context and pass the
+      // unconsumed token back to InitializeSecurityContext or
+      // AcceptSecurityContext.
+      state_ = st_handshake_read;
+      A2_LOG_INFO(
+          "WinTLS: Processing renegotiation or post-handshake message");
       std::string hn, err;
       TLSVersion ver;
       auto connect = tlsConnect(hn, ver, err);
@@ -561,8 +565,11 @@ ssize_t WinTLSSession::readData(void* data, size_t len)
 
   len = std::min(decBuf_.size(), len);
   if (len == 0) {
-    if (state_ != st_connected) {
-      return state_ == st_error ? TLS_ERR_ERROR : 0;
+    if (state_ == st_error) {
+      return TLS_ERR_ERROR;
+    }
+    if (state_ == st_closing || state_ == st_closed) {
+      return 0;
     }
 
     return TLS_ERR_WOULDBLOCK;

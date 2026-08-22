@@ -366,6 +366,7 @@ if test "x$with_wintls" = "xyes"; then
   if test "x$have_wintls_libs" = "xyes" &&
      test "x$have_wintls_headers" = "xyes"; then
     AC_DEFINE([SECURITY_WIN32], [1], [Use security.h in WIN32 mode])
+    AC_DEFINE([HAVE_WINTLS], [1], [Define to 1 if you have WinTLS])
     WINTLS_LIBS="-lcrypt32 -lsecur32 -ladvapi32"
     AC_SUBST([WINTLS_LIBS])
     have_wintls=yes
