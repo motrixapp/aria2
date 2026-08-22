@@ -222,6 +222,9 @@ std::string usedLibs()
   res += "GnuTLS/" GNUTLS_VERSION " ";
 #endif // HAVE_LIBGNUTLS
 #ifdef HAVE_OPENSSL
+#  if OPENSSL_VERSION_NUMBER >= 0x30000000L
+  res += "OpenSSL/" OPENSSL_VERSION_STR " ";
+#  else  // !(OPENSSL_VERSION_NUMBER >= 0x30000000L)
   res += fmt("OpenSSL/%ld.%ld.%ld", OPENSSL_VERSION_NUMBER >> 28,
              (OPENSSL_VERSION_NUMBER >> 20) & 0xff,
              (OPENSSL_VERSION_NUMBER >> 12) & 0xff);
@@ -229,6 +232,7 @@ std::string usedLibs()
     res += 'a' + ((OPENSSL_VERSION_NUMBER >> 4) & 0xff) - 1;
   }
   res += " ";
+#  endif // !(OPENSSL_VERSION_NUMBER >= 0x30000000L)
 #endif // HAVE_OPENSSL
 #ifdef HAVE_LIBNETTLE
   // No library version in header files.

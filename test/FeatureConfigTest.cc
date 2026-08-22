@@ -8,6 +8,10 @@
 #include "array_fun.h"
 #include "util.h"
 
+#ifdef HAVE_OPENSSL
+#  include <openssl/opensslv.h>
+#endif // HAVE_OPENSSL
+
 namespace aria2 {
 
 class FeatureConfigTest : public CppUnit::TestFixture {
@@ -16,12 +20,14 @@ class FeatureConfigTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testGetDefaultPort);
   CPPUNIT_TEST(testStrSupportedFeature);
   CPPUNIT_TEST(testFeatureSummary);
+  CPPUNIT_TEST(testUsedLibs);
   CPPUNIT_TEST_SUITE_END();
 
 public:
   void testGetDefaultPort();
   void testStrSupportedFeature();
   void testFeatureSummary();
+  void testUsedLibs();
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION(FeatureConfigTest);
@@ -98,6 +104,14 @@ void FeatureConfigTest::testFeatureSummary()
   std::string featuresString =
       strjoin(std::begin(features), std::end(features), ", ");
   CPPUNIT_ASSERT_EQUAL(featuresString, featureSummary());
+}
+
+void FeatureConfigTest::testUsedLibs()
+{
+#if defined(HAVE_OPENSSL) && OPENSSL_VERSION_NUMBER >= 0x30000000L
+  CPPUNIT_ASSERT(usedLibs().find("OpenSSL/" OPENSSL_VERSION_STR) !=
+                 std::string::npos);
+#endif // HAVE_OPENSSL && OPENSSL_VERSION_NUMBER >= 0x30000000L
 }
 
 } // namespace aria2
