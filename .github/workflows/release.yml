@@ -132,7 +132,7 @@ jobs:
         Remove-Item Env:SSL_CERT_FILE -ErrorAction SilentlyContinue
         Remove-Item Env:SSL_CERT_DIR -ErrorAction SilentlyContinue
         $urls = @(
-          'https://www.cloudflare.com/cdn-cgi/trace',
+          'https://www.cloudflare.com/favicon.ico',
           'https://github.com/motrixapp/aria2/releases/download/v1.37.0-motrix.6/aria2c-1.37.0-motrix.6-win32-x64.zip',
           'https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe'
         )
