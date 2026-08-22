@@ -40,6 +40,7 @@
 #include <openssl/err.h>
 #include <openssl/pkcs12.h>
 #include <openssl/bio.h>
+#include <openssl/x509_vfy.h>
 
 #include "LogFactory.h"
 #include "Logger.h"
@@ -275,15 +276,27 @@ bool OpenSSLTLSContext::addP12CredentialFile(const std::string& p12file)
 
 bool OpenSSLTLSContext::addSystemTrustedCACerts()
 {
+#if defined(_WIN32) && OPENSSL_VERSION_NUMBER >= 0x30200000L
+  // OpenSSL's Windows certificate store is not loaded by the default verify
+  // paths.  Attach the native ROOT store explicitly so a bundled Windows
+  // build does not require a separate CA bundle or SSL_CERT_FILE.
+  auto certStore = SSL_CTX_get_cert_store(sslCtx_);
+  if (certStore == nullptr ||
+      X509_STORE_load_store(certStore, "org.openssl.winstore:") != 1) {
+    A2_LOG_INFO(fmt(MSG_LOADING_SYSTEM_TRUSTED_CA_CERTS_FAILED,
+                    ERR_error_string(ERR_get_error(), nullptr)));
+    return false;
+  }
+#else  // !Windows or OpenSSL < 3.2
   if (SSL_CTX_set_default_verify_paths(sslCtx_) != 1) {
     A2_LOG_INFO(fmt(MSG_LOADING_SYSTEM_TRUSTED_CA_CERTS_FAILED,
                     ERR_error_string(ERR_get_error(), nullptr)));
     return false;
   }
-  else {
-    A2_LOG_INFO("System trusted CA certificates were successfully added.");
-    return true;
-  }
+#endif // !Windows or OpenSSL < 3.2
+
+  A2_LOG_INFO("System trusted CA certificates were successfully added.");
+  return true;
 }
 
 bool OpenSSLTLSContext::addTrustedCACertFile(const std::string& certfile)

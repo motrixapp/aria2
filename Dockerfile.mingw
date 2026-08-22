@@ -95,10 +95,10 @@ RUN . /deps.env && tar xf zlib-$ZLIB_VERSION.tar.gz && \
         --static && \
     make -j$(nproc) install
 
-# OpenSSL 3.2+ uses the Windows ROOT certificate store by default. Keep the
-# provider modules built into the static libraries: aria2 loads the legacy
-# provider for BitTorrent MSE, and a standalone aria2c.exe cannot dlopen a
-# legacy provider DLL. The Windows store loader is built in as well, so the
+# Keep the provider modules built into the static libraries: aria2 loads the
+# legacy provider for BitTorrent MSE, and a standalone aria2c.exe cannot dlopen
+# a legacy provider DLL. OpenSSL 3.2+ also builds in its Windows store loader;
+# aria2 explicitly attaches that loader to the native ROOT store, so the
 # packaged application does not need SSL_CERT_FILE or a bundled CA file.
 RUN . /deps.env && tar xf openssl-$OPENSSL_VERSION.tar.gz && \
     cd openssl-$OPENSSL_VERSION && \
