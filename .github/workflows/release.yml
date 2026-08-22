@@ -72,6 +72,7 @@ jobs:
     needs: version
     runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         include:
         - { host: x86_64-w64-mingw32, asset_arch: x64 }
@@ -97,6 +98,58 @@ jobs:
       with:
         name: win32-${{ matrix.asset_arch }}
         path: aria2c-*-win32-*.zip
+
+  windows-smoke:
+    needs: [version, windows]
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        asset_arch: [x64, ia32]
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      with:
+        name: win32-${{ matrix.asset_arch }}
+        path: dist
+    - name: Verify OpenSSL backend and Windows trust store
+      shell: pwsh
+      run: |
+        $archive = Get-ChildItem -Path dist -Filter '*.zip' | Select-Object -First 1
+        if (-not $archive) { throw 'Windows aria2 archive was not downloaded' }
+        Expand-Archive -LiteralPath $archive.FullName -DestinationPath bin
+
+        $expectedOpenSSL = (Select-String -Path scripts/ci/deps.env -Pattern '^OPENSSL_VERSION=').Line.Split('=', 2)[1]
+        $versionOutput = (& .\bin\aria2c.exe --version 2>&1 | Out-String)
+        if ($LASTEXITCODE -ne 0) { throw "aria2c --version failed: $versionOutput" }
+        if ($versionOutput -notmatch [regex]::Escape("OpenSSL/$expectedOpenSSL")) {
+          throw "Expected OpenSSL/$expectedOpenSSL backend: $versionOutput"
+        }
+        if ($versionOutput -match 'WinTLS') {
+          throw "WinTLS must not be present in the Windows release: $versionOutput"
+        }
+
+        Remove-Item Env:SSL_CERT_FILE -ErrorAction SilentlyContinue
+        Remove-Item Env:SSL_CERT_DIR -ErrorAction SilentlyContinue
+        $urls = @(
+          'https://www.cloudflare.com/cdn-cgi/trace',
+          'https://github.com/motrixapp/aria2/releases/download/v1.37.0-motrix.6/aria2c-1.37.0-motrix.6-win32-x64.zip',
+          'https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe'
+        )
+        foreach ($url in $urls) {
+          & .\bin\aria2c.exe `
+            --no-conf=true `
+            --dry-run=true `
+            --check-certificate=true `
+            --max-tries=1 `
+            --connect-timeout=30 `
+            --timeout=30 `
+            --console-log-level=notice `
+            $url
+          if ($LASTEXITCODE -ne 0) {
+            throw "HTTPS smoke failed for $url (exit $LASTEXITCODE)"
+          }
+        }
 
   linux:
     needs: version
@@ -156,7 +209,7 @@ jobs:
         path: aria2c-*-android-arm.tar.gz
 
   publish:
-    needs: [macos, windows, linux, android]
+    needs: [macos, windows-smoke, linux, android]
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     steps:

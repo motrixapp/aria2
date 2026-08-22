@@ -52,6 +52,7 @@
 # * expat
 # * sqlite3
 # * zlib
+# * openssl
 # * libssh2
 # * cppunit
 
@@ -64,8 +65,9 @@ test -z "$PREFIX" && PREFIX=/usr/local/$HOST
     --without-included-gettext \
     --disable-nls \
     --with-libcares \
+    --without-wintls \
     --without-gnutls \
-    --without-openssl \
+    --with-openssl \
     --with-sqlite3 \
     --without-libxml2 \
     --with-libexpat \
@@ -79,4 +81,5 @@ test -z "$PREFIX" && PREFIX=/usr/local/$HOST
     CPPFLAGS="-I$PREFIX/include" \
     LDFLAGS="-L$PREFIX/lib" \
     PKG_CONFIG="/usr/bin/pkg-config" \
+    PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig" \
     PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"

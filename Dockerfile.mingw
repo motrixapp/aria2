@@ -46,6 +46,7 @@ RUN . /deps.env && \
     fetch https://www.sqlite.org/$SQLITE_YEAR/sqlite-$SQLITE_VERSION.tar.gz "$SQLITE_SHA256" && \
     fetch https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/zlib-$ZLIB_VERSION.tar.gz "$ZLIB_SHA256" && \
     fetch https://github.com/c-ares/c-ares/releases/download/v$CARES_VERSION/c-ares-$CARES_VERSION.tar.gz "$CARES_SHA256" && \
+    fetch https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz "$OPENSSL_SHA256" && \
     fetch https://libssh2.org/download/libssh2-$LIBSSH2_VERSION.tar.bz2 "$LIBSSH2_BZ2_SHA256"
 
 RUN . /deps.env && tar xf gmp-$GMP_VERSION.tar.xz && \
@@ -94,6 +95,29 @@ RUN . /deps.env && tar xf zlib-$ZLIB_VERSION.tar.gz && \
         --static && \
     make -j$(nproc) install
 
+# OpenSSL 3.2+ uses the Windows ROOT certificate store by default. Keep the
+# provider modules built into the static libraries: aria2 loads the legacy
+# provider for BitTorrent MSE, and a standalone aria2c.exe cannot dlopen a
+# legacy provider DLL. The Windows store loader is built in as well, so the
+# packaged application does not need SSL_CERT_FILE or a bundled CA file.
+RUN . /deps.env && tar xf openssl-$OPENSSL_VERSION.tar.gz && \
+    cd openssl-$OPENSSL_VERSION && \
+    case "$HOST" in \
+      x86_64-w64-mingw32) openssl_target=mingw64 ;; \
+      i686-w64-mingw32) openssl_target=mingw ;; \
+      *) echo "Unsupported MinGW host: $HOST" >&2; exit 1 ;; \
+    esac && \
+    ./Configure \
+        no-shared \
+        no-module \
+        no-tests \
+        --cross-compile-prefix=$HOST- \
+        --prefix=/usr/local/$HOST \
+        --libdir=lib \
+        "$openssl_target" && \
+    make -j$(nproc) && \
+    make install_sw
+
 RUN . /deps.env && tar xf c-ares-$CARES_VERSION.tar.gz && \
     cd c-ares-$CARES_VERSION && \
     ./configure \
@@ -114,6 +138,12 @@ RUN . /deps.env && tar xf libssh2-$LIBSSH2_VERSION.tar.bz2 && \
         --prefix=/usr/local/$HOST \
         --host=$HOST \
         --build=`dpkg-architecture -qDEB_BUILD_GNU_TYPE` \
+        --disable-examples-build \
+        --with-crypto=openssl \
+        --with-libssl-prefix=/usr/local/$HOST \
+        CPPFLAGS="-I/usr/local/$HOST/include" \
+        LDFLAGS="-L/usr/local/$HOST/lib" \
+        PKG_CONFIG_LIBDIR="/usr/local/$HOST/lib/pkgconfig" \
         LIBS="-lws2_32" && \
     make -j$(nproc) install
 
@@ -121,5 +151,10 @@ COPY . /aria2
 WORKDIR /aria2
 RUN autoreconf -fi
 
-RUN ./mingw-config && make -j$(nproc) && \
-    $HOST-strip src/aria2c.exe
+RUN ./mingw-config && \
+    grep -q '^#define HAVE_OPENSSL 1' config.h && \
+    ! grep -q '^#define HAVE_WINTLS 1' config.h && \
+    make -j$(nproc) && \
+    $HOST-strip src/aria2c.exe && \
+    ! $HOST-objdump -p src/aria2c.exe | grep -Eiq \
+        'DLL Name: .*\b(libssl|libcrypto)[^ ]*\.dll'

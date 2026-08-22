@@ -9,11 +9,17 @@ The executable is statically linked, so no extra DLLs are
 necessary. The linked libraries are:
 
 * gmp 6.3.0
-* expat 2.5.0
-* sqlite 3.43.1
-* zlib 1.3.1
-* c-ares 1.19.1
-* libssh2 1.11.0
+* expat 2.8.3
+* sqlite 3.53.4
+* zlib 1.3.2
+* c-ares 1.34.8
+* OpenSSL 3.5.7
+* libssh2 1.11.1
+
+OpenSSL 3.2 and later use the Windows system ``ROOT`` certificate
+store by default. The release binary therefore does not require a bundled CA
+file or ``SSL_CERT_FILE``. Release CI verifies this on Windows with certificate
+checking enabled and both OpenSSL CA environment overrides removed.
 
 This build has the following difference from the original release:
 
@@ -22,8 +28,6 @@ This build has the following difference from the original release:
 
 Known Issues
 ------------
-
-* TLSv1.3 does not work.
 
 * --file-allocation=falloc uses SetFileValidData function to allocate
     disk space without filling zero.  But it has security
