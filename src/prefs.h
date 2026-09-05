@@ -357,6 +357,7 @@ extern PrefPtr PREF_HTTP_PASSWD;
 extern PrefPtr PREF_USER_AGENT;
 // value: string that your file system recognizes as a file name.
 extern PrefPtr PREF_LOAD_COOKIES;
+extern PrefPtr PREF_REQUIRE_TASK_COOKIES;
 // value: string that your file system recognizes as a file name.
 extern PrefPtr PREF_SAVE_COOKIES;
 // values: true | false

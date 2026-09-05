@@ -54,6 +54,7 @@ namespace aria2 {
 
 struct DownloadResult;
 class RequestGroup;
+class CookieStorage;
 class CheckIntegrityEntry;
 
 namespace rpc {
@@ -129,11 +130,31 @@ void toStringList(OutputIterator out, const List* src)
 
 class AddUriRpcMethod : public RpcMethod {
 protected:
+  std::unique_ptr<ValueBase> addUri(
+      const RpcRequest& req, DownloadEngine* e, size_t optionsIndex,
+      std::shared_ptr<CookieStorage> cookies = nullptr);
+
   virtual std::unique_ptr<ValueBase> process(const RpcRequest& req,
                                              DownloadEngine* e) CXX11_OVERRIDE;
 
 public:
   static const char* getMethodName() { return "aria2.addUri"; }
+};
+
+class AddUriWithCookiesRpcMethod : public AddUriRpcMethod {
+protected:
+  std::unique_ptr<ValueBase> process(const RpcRequest& req,
+                                   DownloadEngine* e) CXX11_OVERRIDE;
+public:
+  static const char* getMethodName() { return "aria2.addUriWithCookies"; }
+};
+
+class SetTaskCookiesRpcMethod : public RpcMethod {
+protected:
+  std::unique_ptr<ValueBase> process(const RpcRequest& req,
+                                   DownloadEngine* e) CXX11_OVERRIDE;
+public:
+  static const char* getMethodName() { return "aria2.setTaskCookies"; }
 };
 
 class RemoveRpcMethod : public RpcMethod {

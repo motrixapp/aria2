@@ -1,5 +1,10 @@
 # aria2_motrix sqlite3-persistence e2e tests
 
+For the HTTP task-cookie and credential-redirect contract, see
+[`doc/task-cookies.md`](../../doc/task-cookies.md) /
+[中文说明](../../doc/task-cookies.zh-CN.md). Run it independently with
+`ARIA2_E2E_BIN=/path/to/aria2c node --test test/e2e/task-cookies.e2e.test.mjs`.
+
 End-to-end suite that verifies the SQLite3-Persistence path of `aria2_motrix`
 through the BT pause / resume / restart cycle that Motrix Turbo users hit.
 

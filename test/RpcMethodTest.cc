@@ -9,6 +9,9 @@
 #include "RequestGroupMan.h"
 #include "RequestGroup.h"
 #include "RpcMethodImpl.h"
+#include "RpcCookie.h"
+#include "CookieStorage.h"
+#include "Cookie.h"
 #include "OptionParser.h"
 #include "OptionHandler.h"
 #include "RpcRequest.h"
@@ -48,6 +51,7 @@ class RpcMethodTest : public CppUnit::TestFixture {
   CPPUNIT_TEST_SUITE(RpcMethodTest);
   CPPUNIT_TEST(testAuthorize);
   CPPUNIT_TEST(testAddUri);
+  CPPUNIT_TEST(testTaskCookies);
   CPPUNIT_TEST(testAddUri_acceptsJsonBoolOption);
   CPPUNIT_TEST(testAddUri_withoutUri);
   CPPUNIT_TEST(testAddUri_notUri);
@@ -137,6 +141,7 @@ public:
 
   void testAuthorize();
   void testAddUri();
+  void testTaskCookies();
   void testAddUri_acceptsJsonBoolOption();
   void testAddUri_withoutUri();
   void testAddUri_notUri();
@@ -2424,4 +2429,80 @@ void RpcMethodTest::testRemoveDownloadResultStoreFailureIsNotNotFound()
 
 } // namespace rpc
 
+} // namespace aria2
+
+namespace aria2 { namespace rpc {
+void RpcMethodTest::testTaskCookies()
+{
+  auto record = []() {
+    auto c = Dict::g();
+    c->put("name", "session");
+    c->put("value", "synthetic");
+    c->put("domain", ".example.org");
+    c->put("path", "/files");
+    c->put("secure", Bool::gTrue());
+    c->put("expiresAt", Integer::g(2102444800000LL));
+    return c;
+  };
+  auto cookies = List::g();
+  cookies->append(record());
+  auto store = parseRpcCookies(*cookies);
+  CPPUNIT_ASSERT_EQUAL(
+      size_t(1), store->criteriaFind("sub.example.org", "/files/a",
+                                   1700000000, true).size());
+  CPPUNIT_ASSERT(store->criteriaFind("other.org", "/files/a",
+                                     1700000000, true).empty());
+  CPPUNIT_ASSERT(store->criteriaFind("example.org", "/other",
+                                     1700000000, true).empty());
+  CPPUNIT_ASSERT(store->criteriaFind("example.org", "/files/a",
+                                     1700000000, false).empty());
+  CPPUNIT_ASSERT(store->criteriaFind("example.org", "/files/a",
+                                     2102444801LL, true).empty());
+
+  auto exact = record();
+  exact->put("hostOnly", Bool::gTrue());
+  auto exactList = List::g();
+  exactList->append(std::move(exact));
+  auto exactStore = parseRpcCookies(*exactList);
+  CPPUNIT_ASSERT_EQUAL(
+      size_t(1), exactStore->criteriaFind("example.org", "/files/a",
+                                        1700000000, true).size());
+  CPPUNIT_ASSERT(exactStore->criteriaFind("sub.example.org", "/files/a",
+                                          1700000000, true).empty());
+
+  for (const auto& field : {"name", "value", "domain", "path"}) {
+    auto bad = record();
+    bad->put(field, "bad\r\nInjected: true");
+    auto list = List::g();
+    list->append(std::move(bad));
+    CPPUNIT_ASSERT_THROW(parseRpcCookies(*list), DlAbortEx);
+  }
+  auto bad = record();
+  bad->put("secure", "true");
+  auto badList = List::g();
+  badList->append(std::move(bad));
+  CPPUNIT_ASSERT_THROW(parseRpcCookies(*badList), DlAbortEx);
+
+  AddUriWithCookiesRpcMethod method;
+  auto req = createReq(AddUriWithCookiesRpcMethod::getMethodName());
+  auto uris = List::g();
+  uris->append("https://example.org/files/a");
+  req.params->append(std::move(uris));
+  req.params->append(std::move(cookies));
+  auto result = method.execute(std::move(req), e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, result.code);
+  const auto& group = *e_->getRequestGroupMan()->getReservedGroups().begin();
+  CPPUNIT_ASSERT(group->getTaskCookieStorage());
+  CPPUNIT_ASSERT(group->getOption()->getAsBool(PREF_REQUIRE_TASK_COOKIES));
+  CPPUNIT_ASSERT_EQUAL(size_t(0), e_->getCookieStorage()->size());
+
+  SetTaskCookiesRpcMethod replace;
+  auto replaceReq = createReq(SetTaskCookiesRpcMethod::getMethodName());
+  replaceReq.params->append(GroupId::toHex(group->getGID()));
+  replaceReq.params->append(List::g());
+  auto replaced = replace.execute(std::move(replaceReq), e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, replaced.code);
+  CPPUNIT_ASSERT_EQUAL(size_t(0), group->getTaskCookieStorage()->size());
+}
+} // namespace rpc
 } // namespace aria2

@@ -53,6 +53,7 @@
 namespace aria2 {
 
 class DownloadEngine;
+class CookieStorage;
 class SegmentMan;
 class Command;
 class DownloadCommand;
@@ -119,6 +120,9 @@ private:
   std::unique_ptr<URISelector> uriSelector_;
 
   std::shared_ptr<MetadataInfo> metadataInfo_;
+
+  // Shared only with requests and descendants of this logical task.
+  std::shared_ptr<CookieStorage> taskCookieStorage_;
 
   RequestGroupMan* requestGroupMan_;
 
@@ -412,6 +416,16 @@ public:
   std::shared_ptr<DownloadResult> createDownloadResult() const;
 
   const std::shared_ptr<Option>& getOption() const { return option_; }
+
+  const std::shared_ptr<CookieStorage>& getTaskCookieStorage() const
+  {
+    return taskCookieStorage_;
+  }
+
+  void setTaskCookieStorage(std::shared_ptr<CookieStorage> storage)
+  {
+    taskCookieStorage_ = std::move(storage);
+  }
 
   void reportDownloadFinished();
 

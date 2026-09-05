@@ -7,7 +7,7 @@ on:
     inputs:
       version:
         description: 'Version for a dry run (no leading v)'
-        default: '1.37.0-motrix.12-dev'
+        default: '1.37.0-motrix.13-dev'
 
 permissions:
   contents: write
@@ -339,8 +339,53 @@ jobs:
         name: android-arm
         path: aria2c-*-android-arm.tar.gz
 
+  cookie-contract:
+    needs: [macos, windows, linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { asset: darwin-arm64, runner: macos-26 }
+        - { asset: darwin-x64, runner: macos-26-intel }
+        - { asset: win32-x64, runner: windows-2025 }
+        - { asset: win32-ia32, runner: windows-2025 }
+        - { asset: linux-x64, runner: ubuntu-24.04 }
+        - { asset: linux-arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 24
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      with:
+        name: ${{ matrix.asset }}
+        path: dist
+    - name: Extract release candidate
+      shell: bash
+      run: |
+        mkdir bin
+        python - <<'PYTHON'
+        import pathlib, tarfile, zipfile
+        archive = next(pathlib.Path('dist').iterdir())
+        if archive.suffix == '.zip':
+            with zipfile.ZipFile(archive) as source:
+                source.extractall('bin')
+        else:
+            with tarfile.open(archive) as source:
+                source.extractall('bin', filter='data')
+        PYTHON
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          echo "ARIA2_E2E_BIN=$GITHUB_WORKSPACE/bin/aria2c.exe" >> "$GITHUB_ENV"
+        else
+          chmod +x bin/aria2c
+          echo "ARIA2_E2E_BIN=$GITHUB_WORKSPACE/bin/aria2c" >> "$GITHUB_ENV"
+        fi
+    - name: Verify task cookies and credential redirects
+      run: node --test test/e2e/task-cookies.e2e.test.mjs
+
   publish:
-    needs: [macos-smoke, windows-smoke, motrix-windows-consumer, linux, android]
+    needs: [macos-smoke, windows-smoke, motrix-windows-consumer, linux, android, cookie-contract]
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     steps:
@@ -356,13 +401,11 @@ jobs:
           'aria2 fork build for Motrix. Base: upstream 1.37.0.' \
           '' \
           'Highlights:' \
-          '- Replace the legacy macOS AppleTLS backend with statically linked OpenSSL 3.5.8 LTS.' \
-          '- Restore TLS 1.3-only downloads, use macOS Keychain trust roots, and gate both architectures with TLS/certificate smoke tests.' \
-          '- Fix persistent WebSocket JSON-RPC responses on affected Windows systems (#2027, #2029).' \
-          '- Isolate the static Windows OpenSSL runtime from machine-wide OpenSSL configuration.' \
-          '- Upgrade OpenSSL to 3.5.8 LTS and libgcrypt to 1.12.3.' \
-          '- Backport the current libssh2 1.11.1 security fixes used by this build.' \
-          '- Add release-gating WebSocket tests on Windows Server 2022/2025, x64 and ia32.' \
+          '- Add aria2.addUriWithCookies and aria2.setTaskCookies for isolated, in-memory task cookies.' \
+          '- Match cookie domain, path, Secure and expiry on every HTTP request and redirect.' \
+          '- Stop forwarding raw Cookie and Authorization headers across origins.' \
+          '- Keep cookie values out of saved sessions and require reauthentication after engine restart.' \
+          '- Gate all six desktop/server release binaries with local HTTP, HTTPS, Range and restart contracts.' \
           '' \
           'All attached archives are covered by SHA256SUMS.' \
           > release-notes.md

@@ -100,6 +100,13 @@ jobs:
     - name: Build aria2
       run: |
         make -j"$(nproc 2> /dev/null || sysctl -n hw.ncpu)" check
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 24
+    - name: Verify task cookies and credential redirects
+      env:
+        ARIA2_E2E_BIN: ${{ github.workspace }}/src/aria2c
+      run: node --test test/e2e/task-cookies.e2e.test.mjs
     - name: Show test-suite.log on failure
       if: failure()
       run: |

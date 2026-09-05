@@ -38,6 +38,7 @@ class HttpRequestTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testUserAgent);
   CPPUNIT_TEST(testUserAgentHeaderOrder);
   CPPUNIT_TEST(testAddHeader);
+  CPPUNIT_TEST(testSensitiveHeadersRedirect);
   CPPUNIT_TEST(testAcceptMetalink);
   CPPUNIT_TEST(testEnableAcceptEncoding);
   CPPUNIT_TEST(testConditionalRequest);
@@ -70,6 +71,7 @@ public:
   void testUserAgent();
   void testUserAgentHeaderOrder();
   void testAddHeader();
+  void testSensitiveHeadersRedirect();
   void testAcceptMetalink();
   void testEnableAcceptEncoding();
   void testConditionalRequest();
@@ -980,4 +982,31 @@ void HttpRequestTest::testConditionalRequest()
   CPPUNIT_ASSERT(httpRequest.conditionalRequest());
 }
 
+} // namespace aria2
+
+namespace aria2 {
+void HttpRequestTest::testSensitiveHeadersRedirect()
+{
+  auto request = std::make_shared<Request>();
+  CPPUNIT_ASSERT(request->setUri("https://example.org/download"));
+  HttpRequest httpRequest;
+  httpRequest.setRequest(request);
+  httpRequest.setAuthConfigFactory(authConfigFactory_.get());
+  httpRequest.setOption(option_.get());
+  httpRequest.addHeader("cOoKiE: sid=secret\nAUTHORIZATION: Bearer secret\nX-Keep: yes");
+  for (const auto& target : {"https://example.org/next", "https://EXAMPLE.org:443/next"}) {
+    CPPUNIT_ASSERT(request->redirectUri(target));
+    auto text = httpRequest.createRequest();
+    CPPUNIT_ASSERT(text.find("sid=secret") != std::string::npos);
+    CPPUNIT_ASSERT(text.find("Bearer secret") != std::string::npos);
+  }
+  for (const auto& target : {"https://other.org/next", "https://sub.example.org/next",
+                            "https://example.org:444/next", "http://example.org/next"}) {
+    CPPUNIT_ASSERT(request->redirectUri(target));
+    auto text = httpRequest.createRequest();
+    CPPUNIT_ASSERT(text.find("sid=secret") == std::string::npos);
+    CPPUNIT_ASSERT(text.find("Bearer secret") == std::string::npos);
+    CPPUNIT_ASSERT(text.find("X-Keep: yes") != std::string::npos);
+  }
+}
 } // namespace aria2

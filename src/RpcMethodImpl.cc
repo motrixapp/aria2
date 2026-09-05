@@ -33,6 +33,7 @@
  */
 /* copyright --> */
 #include "RpcMethodImpl.h"
+#include "RpcCookie.h"
 
 #include <cassert>
 #include <algorithm>
@@ -251,9 +252,38 @@ void extractUris(OutputIterator out, const List* src)
 std::unique_ptr<ValueBase> AddUriRpcMethod::process(const RpcRequest& req,
                                                     DownloadEngine* e)
 {
+  return addUri(req, e, 1);
+}
+
+std::unique_ptr<ValueBase> AddUriWithCookiesRpcMethod::process(
+    const RpcRequest& req, DownloadEngine* e)
+{
+  auto cookies = parseRpcCookies(*checkRequiredParam<List>(req, 1));
+  return addUri(req, e, 2, std::move(cookies));
+}
+
+std::unique_ptr<ValueBase> SetTaskCookiesRpcMethod::process(
+    const RpcRequest& req, DownloadEngine* e)
+{
+  auto gid = str2Gid(checkRequiredParam<String>(req, 0));
+  auto cookies = parseRpcCookies(*checkRequiredParam<List>(req, 1));
+  auto group = e->getRequestGroupMan()->findGroup(gid);
+  if (!group || group->getState() != RequestGroup::STATE_WAITING ||
+      !group->getOption()->getAsBool(PREF_REQUIRE_TASK_COOKIES)) {
+    throw DL_ABORT_EX(
+        "Task cookies can only be set on waiting or paused cookie tasks.");
+  }
+  group->setTaskCookieStorage(std::move(cookies));
+  return createOKResponse();
+}
+
+std::unique_ptr<ValueBase> AddUriRpcMethod::addUri(
+    const RpcRequest& req, DownloadEngine* e, size_t optionsIndex,
+    std::shared_ptr<CookieStorage> cookies)
+{
   const List* urisParam = checkRequiredParam<List>(req, 0);
-  const Dict* optsParam = checkParam<Dict>(req, 1);
-  const Integer* posParam = checkParam<Integer>(req, 2);
+  const Dict* optsParam = checkParam<Dict>(req, optionsIndex);
+  const Integer* posParam = checkParam<Integer>(req, optionsIndex + 1);
 
   std::vector<std::string> uris;
   extractUris(std::back_inserter(uris), urisParam);
@@ -263,6 +293,29 @@ std::unique_ptr<ValueBase> AddUriRpcMethod::process(const RpcRequest& req,
 
   auto requestOption = std::make_shared<Option>(*e->getOption());
   gatherRequestOption(requestOption.get(), optsParam);
+  if (cookies) {
+    for (const auto& uriText : uris) {
+      uri::UriStruct parsed;
+      if (!uri::parse(parsed, uriText) ||
+          (parsed.protocol != "http" && parsed.protocol != "https")) {
+        throw DL_ABORT_EX("Task cookies require HTTP or HTTPS URIs.");
+      }
+    }
+    // Structured cookies are authoritative. Do not retain ambient or raw
+    // Cookie headers in either the request options or their saved session.
+    std::vector<std::string> headers;
+    const auto& rawHeaders = requestOption->get(PREF_HEADER);
+    util::split(rawHeaders.begin(), rawHeaders.end(), std::back_inserter(headers),
+                '\n', true);
+    std::string retainedHeaders;
+    for (const auto& header : headers) {
+      if (!util::istartsWith(header, "Cookie:")) {
+        retainedHeaders += header + "\n";
+      }
+    }
+    requestOption->put(PREF_HEADER, retainedHeaders);
+    requestOption->put(PREF_REQUIRE_TASK_COOKIES, A2_V_TRUE);
+  }
 
   bool posGiven = checkPosParam(posParam);
   size_t pos = posGiven ? posParam->i() : 0;
@@ -273,6 +326,7 @@ std::unique_ptr<ValueBase> AddUriRpcMethod::process(const RpcRequest& req,
                            /* ignoreLocalPath = */ true);
 
   if (!result.empty()) {
+    result.front()->setTaskCookieStorage(std::move(cookies));
     auto response = addRequestGroup(result.front(), e, posGiven, pos);
 #ifdef HAVE_SQLITE3
     persistTaskMutation(e, result.front());

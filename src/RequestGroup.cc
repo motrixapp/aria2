@@ -284,6 +284,11 @@ RequestGroup::createCheckIntegrityEntry(DownloadEngine* e,
 void RequestGroup::createInitialCommand(
     std::vector<std::unique_ptr<Command>>& commands, DownloadEngine* e)
 {
+  if (option_->getAsBool(PREF_REQUIRE_TASK_COOKIES) && !taskCookieStorage_) {
+    throw DOWNLOAD_FAILURE_EXCEPTION2(
+        "Task cookies must be supplied again after engine restart.",
+        error_code::HTTP_AUTH_FAILED);
+  }
   // Start session timer here.  When file size becomes known, it will
   // be reset again in *FileAllocationEntry, because hash check and
   // file allocation takes a time.  For downloads in which file size
@@ -1097,6 +1102,12 @@ void RequestGroup::postDownloadProcessing(
     for (const auto& pdh : postDownloadHandlers_) {
       if (pdh->canHandle(this)) {
         pdh->getNextRequestGroups(groups, this);
+        for (auto& group : groups) {
+          group->setTaskCookieStorage(taskCookieStorage_);
+          if (taskCookieStorage_) {
+            group->getOption()->put(PREF_REQUIRE_TASK_COOKIES, A2_V_TRUE);
+          }
+        }
         return;
       }
     }

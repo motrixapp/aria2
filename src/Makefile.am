@@ -211,6 +211,7 @@ SRCS =  \
 	RequestGroupCriteria.h\
 	RequestGroupEntry.cc RequestGroupEntry.h\
 	RequestGroupMan.cc RequestGroupMan.h\
+	RpcCookie.cc RpcCookie.h\
 	RpcMethod.cc RpcMethod.h\
 	RpcMethodFactory.cc RpcMethodFactory.h\
 	RpcMethodImpl.cc RpcMethodImpl.h\

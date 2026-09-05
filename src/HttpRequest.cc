@@ -161,6 +161,26 @@ std::string getHostText(const std::string& host, uint16_t port)
 
 std::string HttpRequest::createRequest()
 {
+  uri::UriStruct initial;
+  const bool sameOrigin =
+      uri::parse(initial, request_->getUri()) &&
+      util::strieq(initial.protocol, request_->getProtocol()) &&
+      util::strieq(initial.host, request_->getHost()) &&
+      initial.port == request_->getPort();
+  std::vector<std::string> requestHeaders;
+  for (const auto& header : headers_) {
+    // A task cookie store is authoritative, including when it is empty.
+    if (option_->getAsBool(PREF_REQUIRE_TASK_COOKIES) &&
+        util::istartsWith(header, "Cookie:")) {
+      continue;
+    }
+    if (!sameOrigin && (util::istartsWith(header, "Cookie:") ||
+                        util::istartsWith(header, "Authorization:"))) {
+      continue;
+    }
+    requestHeaders.push_back(header);
+  }
+
   authConfig_ = authConfigFactory_->createAuthConfig(request_, option_);
   auto requestLine = request_->getMethod();
   requestLine += ' ';
@@ -197,12 +217,10 @@ std::string HttpRequest::createRequest()
   }
   builtinHds.emplace_back("Accept:", acceptTypes);
   builtinHds.emplace_back("Host:", getHostText(getURIHost(), getPort()));
-  auto userAgentHeader = std::find_if(std::begin(headers_), std::end(headers_),
-                                      [](const std::string& hd) {
-                                        return util::istartsWith(hd,
-                                                                 "User-Agent:");
-                                      });
-  if (userAgentHeader == std::end(headers_)) {
+  auto userAgentHeader = std::find_if(
+      std::begin(requestHeaders), std::end(requestHeaders),
+      [](const std::string& hd) { return util::istartsWith(hd, "User-Agent:"); });
+  if (userAgentHeader == std::end(requestHeaders)) {
     builtinHds.emplace_back("User-Agent:", userAgent_);
   }
   else {
@@ -296,11 +314,11 @@ std::string HttpRequest::createRequest()
     }
   }
   for (const auto& builtinHd : builtinHds) {
-    auto it = std::find_if(std::begin(headers_), std::end(headers_),
+    auto it = std::find_if(std::begin(requestHeaders), std::end(requestHeaders),
                            [&builtinHd](const std::string& hd) {
                              return util::istartsWith(hd, builtinHd.first);
                            });
-    if (it == std::end(headers_) ||
+    if (it == std::end(requestHeaders) ||
         util::strieq(builtinHd.first, "User-Agent:")) {
       requestLine += builtinHd.first;
       requestLine += ' ';
@@ -309,7 +327,7 @@ std::string HttpRequest::createRequest()
     }
   }
   // append additional headers given by user.
-  for (const auto& hd : headers_) {
+  for (const auto& hd : requestHeaders) {
     if (util::istartsWith(hd, "User-Agent:")) {
       continue;
     }
