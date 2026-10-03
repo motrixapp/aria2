@@ -332,6 +332,7 @@ void RequestGroup::createInitialCommand(
     if (!metadataGetMode) {
       progressInfoFile = makeBtProgressInfoFile(
           downloadContext_, pieceStorage_, option_.get(), e);
+      progressInfoFile->validateFileOpen(!isPreLocalFileCheckEnabled());
     }
 
     auto btRuntime = std::make_shared<BtRuntime>();
@@ -520,6 +521,7 @@ void RequestGroup::createInitialCommand(
   }
   auto progressInfoFile = makeBtProgressInfoFile(
       downloadContext_, pieceStorage_, option_.get(), e);
+  progressInfoFile->validateFileOpen(!isPreLocalFileCheckEnabled());
   removeDefunctControlFile(progressInfoFile);
   // Call Load, Save and file allocation command here
   if (progressInfoFile->exists()) {
@@ -709,6 +711,7 @@ void RequestGroup::adjustFilename(
   }
   if (!option_->getAsBool(PREF_DRY_RUN) &&
       option_->getAsBool(PREF_REMOVE_CONTROL_FILE) && infoFile->exists()) {
+    infoFile->validateFileOpen(true);
     infoFile->removeFile();
     A2_LOG_NOTICE(fmt(_("Removed control file for %s because it is requested by"
                         " user."),
@@ -751,6 +754,8 @@ void RequestGroup::loadAndOpenFile(
     FileOpenMode fileOpenMode)
 {
   try {
+    progressInfoFile->validateFileOpen(fileOpenMode == RESTART_FROM_SCRATCH ||
+                                       !isPreLocalFileCheckEnabled());
     if (!isPreLocalFileCheckEnabled()) {
       pieceStorage_->getDiskAdaptor()->initAndOpenFile();
       return;

@@ -12,7 +12,7 @@ EXTRA_DIST = config.rpath \
 	     Dockerfile.mingw \
 	     examples/libaria2ex.cc examples/libaria2wx.cc
 
-dist_doc_DATA = README README.rst README.html
+dist_doc_DATA = README README.rst README.html README.legacy-checkpoint-import.md
 
 .PHONY: clang-format
 

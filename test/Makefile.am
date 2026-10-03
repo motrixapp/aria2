@@ -14,6 +14,7 @@ aria2c_SOURCES = AllTest.cc\
 	GrowSegmentTest.cc\
 	SingleFileAllocationIteratorTest.cc\
 	DefaultBtProgressInfoFileTest.cc\
+	LegacyCheckpointCodecTest.cc\
 	RequestGroupTest.cc\
 	UtilTest1.cc\
 	UtilTest2.cc\
@@ -316,6 +317,14 @@ AM_CFLAGS = @EXTRACFLAGS@
 AM_CXXFLAGS = @WARNCXXFLAGS@ @CXX1XCXXFLAGS@ @EXTRACXXFLAGS@
 
 EXTRA_DIST = perf/http-tail-reclaim.bench.mjs\
+	e2e/legacy-checkpoint-import.e2e.test.mjs\
+	e2e/helpers/aria2-process.mjs\
+	e2e/helpers/rpc-client.mjs\
+	e2e/fixtures/legacy-v1/partial.bin.aria2\
+	e2e/fixtures/legacy-v1/partial.bin.gz\
+	e2e/fixtures/legacy-v1/fixture-bundle.aria2\
+	e2e/fixtures/legacy-v1/a16dc78c94ce589ed4666ab32285f2d188edf26f.torrent\
+	e2e/fixtures/legacy-v1/provenance.json\
 	4096chunk.txt\
 	chunkChecksumTestFile250.txt\
 	cookies-readonly-wal.sqlite\

@@ -1,0 +1,198 @@
+import { after, before, describe, it } from 'node:test'
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { createServer } from 'node:http'
+import { chmod, copyFile, link, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+import { gunzipSync, gzipSync } from 'node:zlib'
+import { allocPorts, spawnAria2, stopInstance } from './helpers/aria2-process.mjs'
+import { Aria2Rpc } from './helpers/rpc-client.mjs'
+const secret='legacy-fixture-secret', payload=Buffer.alloc(98305,0x63)
+const inspect='aria2.inspectLegacyCheckpointV1', importMethod='aria2.importLegacyCheckpointV1', reconcile='aria2.reconcileLegacyCheckpointV1'
+let root, server, url, nativeControl, nativePartial, requests=[]
+const nativePayload=Buffer.alloc(4194304)
+for(let i=0;i<nativePayload.length;i++)nativePayload[i]=i%251
+const fixture=new URL('./fixtures/legacy-v1/',import.meta.url)
+function sha(b){return createHash('sha256').update(b).digest('hex')}
+function control({ torrent=false, bitfield=0x80, partial=true }={}) {
+  const bytes=Buffer.alloc((torrent?20:0)+39+(partial?13:0));let p=0
+  const u=(n,size)=>{size===8?bytes.writeBigUInt64BE(BigInt(n),p):size===4?bytes.writeUInt32BE(n,p):bytes.writeUInt16BE(n,p);p+=size}
+  u(1,2);u(torrent?1:0,4);u(torrent?20:0,4);if(torrent){bytes.fill(0x68,p,p+20);p+=20}
+  u(32768,4);u(payload.length,8);u(0,8);u(1,4);bytes[p++]=bitfield;u(partial?1:0,4)
+  if(partial){u(1,4);u(32768,4);u(1,4);bytes[p++]=0x80}
+  assert.equal(p,bytes.length);return bytes
+}
+async function until(fn,predicate,timeout=15000){const end=Date.now()+timeout;let value;do{value=await fn();if(predicate(value))return value;await new Promise(r=>setTimeout(r,25))}while(Date.now()<end);assert.fail(`condition timed out: ${JSON.stringify(value)}`)}
+async function engine(t,dir,{ sqlite=true, auth=true }={}) {
+  await mkdir(dir,{recursive:true});const { rpcPort }=allocPorts()
+  const proc=await spawnAria2({args:[
+    '--no-conf=true','--no-netrc=true','--enable-rpc=true','--rpc-listen-all=false',`--rpc-listen-port=${rpcPort}`,
+    ...(auth?[`--rpc-secret=${secret}`]:[]),'--enable-dht=false','--enable-dht6=false','--enable-peer-exchange=false','--bt-enable-lpd=false',
+    '--disable-ipv6=true','--all-proxy=','--max-concurrent-downloads=2','--file-allocation=none','--auto-file-renaming=false','--allow-overwrite=false',
+    '--console-log-level=error','--summary-interval=0',`--dir=${dir}`,`--log=${dir}/engine.log`,'--log-level=debug',
+    `--save-session=${dir}/session.txt`,'--force-save=true','--save-session-interval=1',`--enable-sqlite3-persistence=${sqlite}`,`--sqlite3-db-path=${dir}/session.db`,
+    '--split=1','--max-connection-per-server=1','--max-tries=1','--seed-time=0','--pause=true',
+  ]});t.after(()=>stopInstance(proc));const rpc=new Aria2Rpc({port:rpcPort,secret:auth?secret:''})
+  await until(()=>rpc.call('aria2.getVersion').catch(()=>null),Boolean)
+  return {rpc,dir,stop:signal=>stopInstance(proc,signal)}
+}
+function db(e,fn){const d=new DatabaseSync(`${e.dir}/session.db`);try{d.exec('PRAGMA busy_timeout=5000');return fn(d)}finally{d.close()}}
+function count(e,table){return db(e,d=>d.prepare(`SELECT count(*) AS n FROM ${table}`).get().n)}
+async function request(e,name,{ bytes=control(), data=payload, gid='1234567890abcdef', token=`legacy_test_${name}_token` }={}) {
+  const target=path.join(e.dir,`${name}.bin`);await writeFile(target,data,{mode:0o600})
+  const s=await stat(target,{bigint:true});const observed=await e.rpc.call(inspect,[{controlFile:bytes.toString('base64')}])
+  return {token,gid,controlFile:bytes.toString('base64'),controlDigest:sha(bytes),targetPath:target,
+    expected:{kind:observed.kind,totalLength:observed.totalLength,pieceLength:observed.pieceLength,infoHash:observed.infoHash},
+    files:[{path:target,offset:'0',length:observed.totalLength,identity:{device:String(s.dev),inode:String(s.ino),size:String(s.size),mtimeNs:String(s.mtimeNs),ctimeNs:String(s.ctimeNs)}}]}
+}
+function query(req){return {token:req.token,targetPath:req.targetPath}}
+before(async()=>{
+  root=await realpath(await mkdtemp(path.join(tmpdir(),'aria2-legacy-import-')))
+  nativeControl=await readFile(new URL('partial.bin.aria2',fixture));nativePartial=gunzipSync(await readFile(new URL('partial.bin.gz',fixture)))
+  server=createServer((req,res)=>{requests.push({url:req.url,range:req.headers.range});
+    if(req.url==='/chunked'){res.writeHead(200,{'transfer-encoding':'chunked'});res.end(nativePayload);return}
+    if(req.url==='/gzip'){const compressed=gzipSync(nativePayload);res.writeHead(200,{'content-encoding':'gzip','content-length':compressed.length});res.end(compressed);return}
+    if(req.url==='/zero'){res.writeHead(200,{'content-length':'0'});res.end();return}
+    const source=req.url==='/native'?nativePayload:payload;const range=/^bytes=(\d+)-(\d*)$/.exec(req.headers.range??'');let body=source
+    if(range){const first=Number(range[1]),last=range[2]?Number(range[2]):source.length-1;body=source.subarray(first,last+1);res.statusCode=206;res.setHeader('content-range',`bytes ${first}-${last}/${source.length}`)}
+    res.setHeader('content-length',body.length);res.setHeader('accept-ranges','bytes');res.setHeader('etag','"legacy-test-stable-object"');res.end(body)
+  });await new Promise(r=>server.listen(0,'127.0.0.1',r));url=`http://127.0.0.1:${server.address().port}/fixture`
+})
+after(async()=>{await new Promise(r=>server.close(r));if(process.env.ARIA2_E2E_KEEP_TMP)console.log(`workDir kept: ${root}`);else await rm(root,{recursive:true,force:true})})
+describe('legacy checkpoint engine import',()=>{
+  it('inspects native bitfields and partial blocks without database, file or network mutation',async t=>{
+    const e=await engine(t,`${root}/inspect`);const bytes=control(),originalRequests=requests.length
+    const result=await e.rpc.call(inspect,[{controlFile:bytes.toString('base64')}])
+    assert.deepEqual(result,{version:'1',format:'aria2-v1',kind:'http',totalLength:'98305',pieceLength:'32768',infoHash:'',uploadLength:'0',completedLength:'49152',controlDigest:sha(bytes),ranges:[{offset:'0',length:'49152'}]})
+    assert.equal(count(e,'task_progress'),0);assert.equal(count(e,'legacy_checkpoint_import'),0);assert.equal(count(e,'task'),0);assert.equal(requests.length,originalRequests)
+    const bt=await e.rpc.call(inspect,[{controlFile:control({torrent:true}).toString('base64')}]);assert.equal(bt.infoHash,'68'.repeat(20));assert.equal(bt.kind,'bittorrent')
+  })
+  it('decodes unmodified HTTP and BT controls from the bundled Motrix v1.8.19 engine',async t=>{
+    const e=await engine(t,`${root}/real-inspect`);const observed=await e.rpc.call(inspect,[{controlFile:nativeControl.toString('base64')}])
+    assert.equal(observed.completedLength,'1638400');assert.equal(observed.totalLength,'4194304');assert.equal(observed.pieceLength,'1048576');assert.equal(observed.controlDigest,'40a6f7572e913ad63f0b2e867f26367e30c0cad754389963cb2f2645088dc7c7')
+    assert.deepEqual(observed.ranges,[{offset:'0',length:'1638400'}]);assert.equal(sha(nativePayload),'a117210941a0b00dcb2d8577e680d84b6fa0eaf760d2afc654c953b9859d54fa')
+    const bytes=await readFile(new URL('fixture-bundle.aria2',fixture));const bt=await e.rpc.call(inspect,[{controlFile:bytes.toString('base64')}]);assert.equal(bt.kind,'bittorrent');assert.equal(bt.infoHash,'45c7c651e500cc0ceaa544d6fbafcb21b8cd52f8');assert.equal(bt.totalLength,'32768');assert.equal(bt.pieceLength,'16384');assert.equal(bt.completedLength,'0')
+  })
+  it('fails closed when SQLite persistence or authentication is unavailable',async t=>{
+    for(const [name,opts] of [['text',{sqlite:false}],['noauth',{auth:false}]]){
+      const e=await engine(t,`${root}/${name}`,opts);assert.ok(!(await e.rpc.call('aria2.getVersion')).enabledFeatures.includes('LegacyCheckpointImportV1'))
+      await assert.rejects(e.rpc.call(inspect,[{controlFile:control().toString('base64')}]),/unavailable/)
+    }
+  })
+  it('commits checkpoint+receipt atomically, rejects changed inputs and reconciles across save/restart',async t=>{
+    const dir=`${root}/receipt`;let e=await engine(t,dir);const req=await request(e,'receipt');const beforeRequests=requests.length
+    assert.deepEqual(await e.rpc.call(reconcile,[query(req)]),{version:'1',status:'absent',...query(req)})
+    db(e,d=>d.exec("CREATE TRIGGER reject_receipt BEFORE INSERT ON legacy_checkpoint_import BEGIN SELECT RAISE(ABORT,'injected'); END"))
+    await assert.rejects(e.rpc.call(importMethod,[req]),/write failed/);assert.equal(count(e,'task_progress'),0);assert.equal(count(e,'legacy_checkpoint_import'),0)
+    db(e,d=>d.exec('DROP TRIGGER reject_receipt'))
+    const receipt=await e.rpc.call(importMethod,[req]);assert.equal(receipt.status,'created');assert.equal(count(e,'task'),0)
+    assert.deepEqual(await e.rpc.call(importMethod,[req]),receipt);assert.deepEqual(await e.rpc.call(reconcile,[query(req)]),receipt)
+    await assert.rejects(e.rpc.call(importMethod,[{...req,gid:'1111111111111111'}]),/input conflict/)
+    await assert.rejects(e.rpc.call(importMethod,[{...req,token:'unrelated_checkpoint_token'}]),/conflict/)
+    await e.rpc.call('aria2.saveSession');assert.equal(count(e,'task_progress'),1);assert.equal(requests.length,beforeRequests)
+    await e.stop('SIGKILL');e=await engine(t,dir);assert.deepEqual(await e.rpc.call(reconcile,[query(req)]),receipt)
+    db(e,d=>d.prepare('DELETE FROM task_progress WHERE out_path=?').run(req.targetPath))
+    assert.equal((await e.rpc.call(reconcile,[query(req)])).status,'consumed');assert.equal((await e.rpc.call(importMethod,[req])).status,'consumed');assert.equal(count(e,'task_progress'),0)
+  })
+  it('rejects traversal, symlinks, hardlinks, identity changes and unowned writable files',async t=>{
+    const e=await engine(t,`${root}/paths`),req=await request(e,'safe')
+    const variants=[{...req,targetPath:`${e.dir}/../paths/safe.bin`},{...req,controlDigest:'00'.repeat(32)},
+      {...req,files:[{...req.files[0],identity:{...req.files[0].identity,size:'900719925474099999999'}}]},
+      {...req,expected:{...req.expected,totalLength:'98306'}}]
+    for(const bad of variants)await assert.rejects(e.rpc.call(importMethod,[bad]))
+    const sym=`${e.dir}/alias.bin`;await symlink(req.targetPath,sym);await assert.rejects(e.rpc.call(importMethod,[{...req,targetPath:sym,files:[{...req.files[0],path:sym}]}]),/safe path/)
+    await link(req.targetPath,`${e.dir}/hard.bin`);await assert.rejects(e.rpc.call(importMethod,[req]),/exclusively owned/);await rm(`${e.dir}/hard.bin`)
+    await chmod(req.targetPath,0o666);await assert.rejects(e.rpc.call(importMethod,[req]),/exclusively owned/);await chmod(req.targetPath,0o600)
+    await rename(req.targetPath,`${req.targetPath}.old`);await writeFile(req.targetPath,payload,{mode:0o600});await assert.rejects(e.rpc.call(importMethod,[req]),/identity changed/)
+    assert.equal(count(e,'task_progress'),0)
+  })
+  it('rejects malformed codec input, noncanonical base64 and range claims beyond payload length',async t=>{
+    const e=await engine(t,`${root}/malformed`),bytes=control()
+    for(const b of [bytes.subarray(0,bytes.length-1),Buffer.concat([bytes,Buffer.from([0])]),Buffer.from(bytes)]){
+      if(b.length===bytes.length)b[1]=0
+      await assert.rejects(e.rpc.call(inspect,[{controlFile:b.toString('base64')}]))
+    }
+    await assert.rejects(e.rpc.call(inspect,[{controlFile:bytes.toString('base64')+'\n'}]))
+    const req=await request(e,'short');await writeFile(req.targetPath,Buffer.alloc(1));const s=await stat(req.targetPath,{bigint:true})
+    req.files[0].identity={device:String(s.dev),inode:String(s.ino),size:String(s.size),mtimeNs:String(s.mtimeNs),ctimeNs:String(s.ctimeNs)}
+    await assert.rejects(e.rpc.call(importMethod,[req]),/ranges exceed/)
+  })
+  it('rejects waiting task GID/path conflicts',async t=>{
+    const e=await engine(t,`${root}/conflicts`),req=await request(e,'waiting')
+    await e.rpc.call('aria2.addUri',[[url],{gid:req.gid,pause:'true',dir:e.dir,out:'waiting.bin'}])
+    await assert.rejects(e.rpc.call(importMethod,[req]),/already owned|conflict/)
+    await assert.rejects(e.rpc.call(importMethod,[{...req,gid:'1111111111111111'}]),/already owned|conflict/)
+    assert.equal(count(e,'legacy_checkpoint_import'),0)
+  })
+  it('keeps consumed reconciliation monotonic when a deleted checkpoint is recreated',async t=>{
+    const e=await engine(t,`${root}/monotonic`),req=await request(e,'monotonic');await e.rpc.call(importMethod,[req])
+    db(e,d=>d.exec('CREATE TABLE archived_progress AS SELECT * FROM task_progress; DELETE FROM task_progress'))
+    assert.equal((await e.rpc.call(reconcile,[query(req)])).status,'consumed')
+    db(e,d=>d.exec('INSERT INTO task_progress SELECT * FROM archived_progress'))
+    assert.equal((await e.rpc.call(reconcile,[query(req)])).status,'consumed');assert.equal((await e.rpc.call(importMethod,[req])).status,'consumed')
+    assert.equal(db(e,d=>d.prepare('SELECT consumed FROM legacy_checkpoint_import').get().consumed),2)
+  })
+  it('invalidates missing payload state and allows a fresh task after restart pruning',async t=>{
+    const dir=`${root}/missing`;let e=await engine(t,dir);const req=await request(e,'missing');await e.rpc.call(importMethod,[req]);await rm(req.targetPath);await e.rpc.call('aria2.saveSession')
+    assert.equal((await e.rpc.call(reconcile,[query(req)])).status,'consumed');await e.stop();e=await engine(t,dir);assert.equal(count(e,'task_progress'),0)
+    const gid=await e.rpc.call('aria2.addUri',[[url],{gid:'1111111111111111',pause:'true',dir:e.dir,out:'missing.bin'}]);await e.rpc.unpause(gid)
+    const done=await until(()=>e.rpc.tellStatus(gid),s=>['complete','error'].includes(s.status));assert.equal(done.status,'complete',done.errorMessage);assert.equal(sha(await readFile(req.targetPath)),sha(payload));assert.equal((await e.rpc.call(reconcile,[query(req)])).status,'consumed')
+  })
+  it('preserves original progress and payload on native GID, piece-length and destructive-open rejection',async t=>{
+    for(const [name,options] of [['wrong-gid',{gid:'1111111111111111'}],['wrong-piece',{'piece-length':'2097152'}],['destructive',{'header':['If-Modified-Since: Wed, 01 Jan 2020 00:00:00 GMT'],'allow-overwrite':'true'}],['control-removal',{'remove-control-file':'true','allow-overwrite':'true'}]]){
+      const e=await engine(t,`${root}/${name}`),req=await request(e,name,{bytes:nativeControl,data:nativePartial});await e.rpc.call(importMethod,[req])
+      const original=db(e,d=>d.prepare('SELECT * FROM task_progress').get()),before=await readFile(req.targetPath)
+      const gid=await e.rpc.call('aria2.addUri',[[url.replace('/fixture','/native')],{gid:req.gid,pause:'true',dir:e.dir,out:`${name}.bin`,'piece-length':'1048576',...options}]);await e.rpc.unpause(gid)
+      const terminal=await until(()=>e.rpc.tellStatus(gid),s=>['error','complete'].includes(s.status));assert.equal(terminal.status,'error',name);assert.deepEqual(await readFile(req.targetPath),before);assert.deepEqual(db(e,d=>d.prepare('SELECT * FROM task_progress').get()),original)
+      assert.match(await readFile(`${e.dir}/engine.log`,'utf8'),/metadata or GID mismatch|refuses destructive/)
+    }
+  })
+  it('preserves imported payload for chunked, gzip and zero-length HTTP restart paths',async t=>{
+    for(const route of ['chunked','gzip','zero']){
+      const e=await engine(t,`${root}/${route}`),req=await request(e,route,{bytes:nativeControl,data:nativePartial});await e.rpc.call(importMethod,[req]);const original=db(e,d=>d.prepare('SELECT * FROM task_progress').get())
+      await e.rpc.call('aria2.addUri',[[url.replace('/fixture',`/${route}`)],{gid:req.gid,pause:'true',dir:e.dir,out:`${route}.bin`,'piece-length':'1048576','allow-overwrite':'true','http-accept-gzip':'true'}]);await e.rpc.unpause(req.gid);await until(()=>e.rpc.tellStatus(req.gid),s=>s.status==='error')
+      assert.deepEqual(await readFile(req.targetPath),nativePartial);assert.deepEqual(db(e,d=>d.prepare('SELECT * FROM task_progress').get()),original);assert.match(await readFile(`${e.dir}/engine.log`,'utf8'),/refuses destructive payload restart/)
+    }
+  })
+  it('rejects a symlink replacement before any writable payload handle',async t=>{
+    const e=await engine(t,`${root}/symlink-restore`),req=await request(e,'symlink',{bytes:nativeControl,data:nativePartial});await e.rpc.call(importMethod,[req])
+    const original=db(e,d=>d.prepare('SELECT * FROM task_progress').get()),victim=`${e.dir}/unrelated.bin`,bytes=Buffer.from('protected unrelated bytes');await writeFile(victim,bytes,{mode:0o600});await rename(req.targetPath,`${req.targetPath}.old`);await symlink(victim,req.targetPath)
+    await e.rpc.call('aria2.addUri',[[url.replace('/fixture','/native')],{gid:req.gid,pause:'true',dir:e.dir,out:'symlink.bin','piece-length':'1048576','file-allocation':'trunc'}]);await e.rpc.unpause(req.gid);await until(()=>e.rpc.tellStatus(req.gid),s=>s.status==='error')
+    assert.deepEqual(await readFile(victim),bytes);assert.deepEqual(await readFile(`${req.targetPath}.old`),nativePartial);assert.deepEqual(db(e,d=>d.prepare('SELECT * FROM task_progress').get()),original)
+    assert.match(await readFile(`${e.dir}/engine.log`,'utf8'),/safe path open failed/)
+  })
+  it('restores a real multi-file BT checkpoint with selection and verified existing pieces',async t=>{
+    const e=await engine(t,`${root}/bt-restore`),target=`${e.dir}/fixture-bundle`;await mkdir(target)
+    const entries=[]
+    for(const [name,value,offset] of [['first.bin',1,0],['second.bin',2,16384]]){
+      const file=`${target}/${name}`;await writeFile(file,Buffer.alloc(16384,value),{mode:0o600});const s=await stat(file,{bigint:true})
+      entries.push({path:file,offset:String(offset),length:'16384',identity:{device:String(s.dev),inode:String(s.ino),size:String(s.size),mtimeNs:String(s.mtimeNs),ctimeNs:String(s.ctimeNs)}})
+    }
+    const bytes=await readFile(new URL('fixture-bundle.aria2',fixture)),torrent=await readFile(new URL('a16dc78c94ce589ed4666ab32285f2d188edf26f.torrent',fixture))
+    const req={token:'legacy_bt_native_receipt_token',gid:'fedcba9876543210',targetPath:target,controlFile:bytes.toString('base64'),controlDigest:sha(bytes),expected:{kind:'bittorrent',totalLength:'32768',pieceLength:'16384',infoHash:'45c7c651e500cc0ceaa544d6fbafcb21b8cd52f8'},files:entries}
+    const beforeRequests=requests.length;await e.rpc.call(importMethod,[req]);assert.equal(count(e,'task'),0)
+    await e.rpc.addTorrent(torrent.toString('base64'),{gid:req.gid,pause:'true',dir:e.dir,'select-file':'1','check-integrity':'true','bt-seed-unverified':'false','seed-time':'0','seed-ratio':'0'})
+    const paused=await e.rpc.tellStatus(req.gid);assert.equal(paused.status,'paused');assert.equal(paused.files[0].selected,'true');assert.equal(paused.files[1].selected,'false');assert.equal(requests.length,beforeRequests)
+    await e.rpc.unpause(req.gid);const done=await until(()=>e.rpc.tellStatus(req.gid),s=>['complete','error'].includes(s.status));assert.equal(done.status,'complete',done.errorMessage);assert.equal(done.completedLength,'16384');assert.equal(done.uploadLength,'0');assert.equal((await e.rpc.call(reconcile,[query(req)])).status,'consumed')
+    assert.equal(sha(await readFile(entries[0].path)),sha(Buffer.alloc(16384,1)));assert.equal(sha(await readFile(entries[1].path)),sha(Buffer.alloc(16384,2)))
+  })
+  it('restores native partial blocks under the reserved GID only after explicit unpause',async t=>{
+    const e=await engine(t,`${root}/restore`),req=await request(e,'restore',{bytes:nativeControl,data:nativePartial});const beforeRequests=requests.length
+    await e.rpc.call(importMethod,[req]);await e.rpc.call('aria2.addUri',[[url.replace('/fixture','/native')],{gid:req.gid,pause:'true',dir:e.dir,out:'restore.bin','piece-length':'1048576','file-allocation':'none'}])
+    assert.equal((await e.rpc.tellStatus(req.gid)).status,'paused');assert.equal(requests.length,beforeRequests);assert.equal((await e.rpc.call(reconcile,[query(req)])).status,'created')
+    await e.rpc.unpause(req.gid);const result=await until(()=>e.rpc.tellStatus(req.gid),s=>['complete','error'].includes(s.status))
+    assert.equal(result.status,'complete',result.errorMessage);assert.equal(sha(await readFile(req.targetPath)),sha(nativePayload));assert.equal((await e.rpc.call(reconcile,[query(req)])).status,'consumed')
+    assert.ok(requests.slice(beforeRequests).some(r=>r.range==='bytes=1638400-4194303'),JSON.stringify(requests.slice(beforeRequests)))
+    assert.equal(count(e,'task_progress'),1);assert.equal((await e.rpc.call(importMethod,[req])).status,'consumed')
+  })
+  it('rechecks imported payload identity before native restoration',async t=>{
+    const e=await engine(t,`${root}/changed`),req=await request(e,'changed',{bytes:nativeControl,data:nativePartial});await e.rpc.call(importMethod,[req]);await rename(req.targetPath,`${req.targetPath}.old`);await writeFile(req.targetPath,payload,{mode:0o600})
+    await e.rpc.call('aria2.addUri',[[url.replace('/fixture','/native')],{gid:req.gid,pause:'true',dir:e.dir,out:'changed.bin','piece-length':'1048576'}]);const beforeRequests=requests.length
+    await e.rpc.unpause(req.gid);const result=await until(()=>e.rpc.tellStatus(req.gid),s=>s.status==='error');assert.equal(result.status,'error');assert.match(await readFile(`${e.dir}/engine.log`,'utf8'),/payload changed before restoration/)
+    // HTTP metadata acquisition may occur before native file restoration, but
+    // identity rejection prevents writable payload handles and continuation.
+    assert.equal(sha(await readFile(req.targetPath)),sha(payload));assert.equal((await e.rpc.call(reconcile,[query(req)])).status,'consumed');assert.ok(requests.length>=beforeRequests)
+  })
+})

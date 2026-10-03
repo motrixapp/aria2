@@ -2,7 +2,7 @@
 /*
  * aria2 - The high speed download utility
  *
- * Copyright (C) 2006 Tatsuhiro Tsujikawa
+ * Copyright (C) 2026 Tatsuhiro Tsujikawa
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,48 +32,22 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#ifndef D_BT_PROGRESS_INFO_FILE_H
-#define D_BT_PROGRESS_INFO_FILE_H
-
+#ifndef D_LEGACY_CHECKPOINT_IMPORT_H
+#define D_LEGACY_CHECKPOINT_IMPORT_H
 #include "common.h"
-
-#include <memory>
 #include <string>
-
 namespace aria2 {
-
-#ifdef ENABLE_BITTORRENT
-class BtRuntime;
-class PeerStorage;
+class DownloadEngine;
+class DownloadContext;
+class Sqlite3PersistenceStore;
+bool legacyCheckpointImportAvailable(DownloadEngine* engine);
+#ifdef HAVE_SQLITE3
+// Called before native restoration of an imported checkpoint. Rechecks the
+// original read-only payload identities and consumes the receipt atomically.
+bool legacyCheckpointPending(Sqlite3PersistenceStore& store,
+                             const std::string& path);
+void consumeLegacyCheckpoint(Sqlite3PersistenceStore& store,
+                             const std::string& path, DownloadContext& context);
 #endif
-
-class BtProgressInfoFile {
-public:
-  virtual ~BtProgressInfoFile() = default;
-
-  virtual std::string getFilename() = 0;
-
-  virtual bool exists() = 0;
-
-  virtual void save() = 0;
-
-  virtual void load() = 0;
-
-  // SQLite imports must validate ownership before any payload open, including
-  // code paths that would otherwise bypass load and truncate old bytes.
-  virtual void validateFileOpen(bool destructive = false) {}
-
-  virtual void removeFile() = 0;
-
-  // re-set filename
-  virtual void updateFilename() = 0;
-
-#ifdef ENABLE_BITTORRENT
-  virtual void setBtRuntime(const std::shared_ptr<BtRuntime>& btRuntime) {}
-  virtual void setPeerStorage(const std::shared_ptr<PeerStorage>& peerStorage) {}
-#endif
-};
-
 } // namespace aria2
-
-#endif // D_BT_PROGRESS_INFO_FILE_H
+#endif

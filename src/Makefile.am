@@ -65,6 +65,8 @@ SRCS =  \
 	BtProgressInfoFileFactory.cc BtProgressInfoFileFactory.h\
 	DefaultAuthResolver.cc DefaultAuthResolver.h\
 	DefaultBtProgressInfoFile.cc DefaultBtProgressInfoFile.h\
+	LegacyCheckpointCodec.cc LegacyCheckpointCodec.h\
+	LegacyCheckpointImport.cc LegacyCheckpointImport.h\
 	DefaultDiskWriter.cc DefaultDiskWriter.h\
 	DefaultDiskWriterFactory.cc DefaultDiskWriterFactory.h\
 	DefaultPieceStorage.cc DefaultPieceStorage.h\
