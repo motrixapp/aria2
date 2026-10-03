@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { gunzipSync, gzipSync } from 'node:zlib'
 import { allocPorts, spawnAria2, stopInstance } from './helpers/aria2-process.mjs'
 import { Aria2Rpc } from './helpers/rpc-client.mjs'
+import { encode } from './helpers/bencode.mjs'
 const secret='legacy-fixture-secret', payload=Buffer.alloc(98305,0x63)
 const inspect='aria2.inspectLegacyCheckpointV1', importMethod='aria2.importLegacyCheckpointV1', reconcile='aria2.reconcileLegacyCheckpointV1'
 let root, server, url, nativeControl, nativePartial, requests=[]
@@ -26,17 +27,17 @@ function control({ torrent=false, bitfield=0x80, partial=true }={}) {
 }
 async function until(fn,predicate,timeout=15000){const end=Date.now()+timeout;let value;do{value=await fn();if(predicate(value))return value;await new Promise(r=>setTimeout(r,25))}while(Date.now()<end);assert.fail(`condition timed out: ${JSON.stringify(value)}`)}
 async function engine(t,dir,{ sqlite=true, auth=true }={}) {
-  await mkdir(dir,{recursive:true});const { rpcPort }=allocPorts()
+  await mkdir(dir,{recursive:true});const { rpcPort, listenPort }=allocPorts()
   const proc=await spawnAria2({args:[
     '--no-conf=true','--no-netrc=true','--enable-rpc=true','--rpc-listen-all=false',`--rpc-listen-port=${rpcPort}`,
     ...(auth?[`--rpc-secret=${secret}`]:[]),'--enable-dht=false','--enable-dht6=false','--enable-peer-exchange=false','--bt-enable-lpd=false',
-    '--disable-ipv6=true','--all-proxy=','--max-concurrent-downloads=2','--file-allocation=none','--auto-file-renaming=false','--allow-overwrite=false',
+    '--disable-ipv6=true','--interface=127.0.0.1',`--listen-port=${listenPort}`,'--all-proxy=','--max-concurrent-downloads=2','--file-allocation=none','--auto-file-renaming=false','--allow-overwrite=false',
     '--console-log-level=error','--summary-interval=0',`--dir=${dir}`,`--log=${dir}/engine.log`,'--log-level=debug',
     `--save-session=${dir}/session.txt`,'--force-save=true','--save-session-interval=1',`--enable-sqlite3-persistence=${sqlite}`,`--sqlite3-db-path=${dir}/session.db`,
     '--split=1','--max-connection-per-server=1','--max-tries=1','--seed-time=0','--pause=true',
   ]});t.after(()=>stopInstance(proc));const rpc=new Aria2Rpc({port:rpcPort,secret:auth?secret:''})
   await until(()=>rpc.call('aria2.getVersion').catch(()=>null),Boolean)
-  return {rpc,dir,stop:signal=>stopInstance(proc,signal)}
+  return {rpc,dir,listenPort,stop:signal=>stopInstance(proc,signal)}
 }
 function db(e,fn){const d=new DatabaseSync(`${e.dir}/session.db`);try{d.exec('PRAGMA busy_timeout=5000');return fn(d)}finally{d.close()}}
 function count(e,table){return db(e,d=>d.prepare(`SELECT count(*) AS n FROM ${table}`).get().n)}
@@ -48,6 +49,110 @@ async function request(e,name,{ bytes=control(), data=payload, gid='1234567890ab
     files:[{path:target,offset:'0',length:observed.totalLength,identity:{device:String(s.dev),inode:String(s.ino),size:String(s.size),mtimeNs:String(s.mtimeNs),ctimeNs:String(s.ctimeNs)}}]}
 }
 function query(req){return {token:req.token,targetPath:req.targetPath}}
+
+function trackerInfoHash(rawUrl) {
+  const value=/(?:[?&])info_hash=([^&]*)/.exec(rawUrl)?.[1]??''
+  const bytes=[]
+  for(let i=0;i<value.length;i++) {
+    if(value[i]==='%'&&/^[0-9a-f]{2}$/i.test(value.slice(i+1,i+3))) {
+      bytes.push(parseInt(value.slice(i+1,i+3),16));i+=2
+    } else bytes.push(value[i]==='+'?32:value.charCodeAt(i))
+  }
+  return Buffer.from(bytes).toString('hex')
+}
+
+async function localTracker(t,seeder,downloader,infoHash) {
+  const announces=[],rejected=[]
+  const compact=Buffer.alloc(6);compact.set([127,0,0,1]);compact.writeUInt16BE(seeder.listenPort,4)
+  const tracker=createServer((req,res)=>{
+    const parsed=new URL(req.url,'http://127.0.0.1')
+    const port=Number(parsed.searchParams.get('port'))
+    const valid=req.socket.remoteAddress==='127.0.0.1'&&parsed.pathname==='/announce'&&
+      trackerInfoHash(req.url)===infoHash&&[seeder.listenPort,downloader.listenPort].includes(port)
+    if(!valid)rejected.push(req.url)
+    else announces.push({port,event:parsed.searchParams.get('event')})
+    res.end(encode(valid?{interval:1,'min interval':1,complete:1,incomplete:1,
+      peers:port===downloader.listenPort?compact:Buffer.alloc(0)}:{'failure reason':'nonlocal or unexpected test peer'}))
+  })
+  await new Promise(r=>tracker.listen(0,'127.0.0.1',r))
+  t.after(async()=>{tracker.closeAllConnections();await new Promise(r=>tracker.close(r))})
+  return {url:`http://127.0.0.1:${tracker.address().port}/announce`,announces,rejected}
+}
+
+async function btFiles(e,name,files) {
+  const target=`${e.dir}/${name}`;await mkdir(target)
+  let offset=0
+  const entries=[]
+  for(const {name:fileName,bytes,length=bytes.length} of files) {
+    const file=`${target}/${fileName}`;await writeFile(file,bytes,{mode:0o600})
+    const s=await stat(file,{bigint:true})
+    entries.push({path:file,offset:String(offset),length:String(length),identity:{
+      device:String(s.dev),inode:String(s.ino),size:String(s.size),mtimeNs:String(s.mtimeNs),ctimeNs:String(s.ctimeNs)}})
+    offset+=length
+  }
+  return {target,entries}
+}
+
+async function importBt(e,name,controlBytes,files) {
+  const {target,entries}=await btFiles(e,name,files)
+  const observed=await e.rpc.call(inspect,[{controlFile:controlBytes.toString('base64')}])
+  const req={token:`legacy_local_peer_${name}_token`,gid:'fedcba9876543210',targetPath:target,
+    controlFile:controlBytes.toString('base64'),controlDigest:sha(controlBytes),
+    expected:{kind:observed.kind,totalLength:observed.totalLength,pieceLength:observed.pieceLength,infoHash:observed.infoHash},files:entries}
+  assert.equal((await e.rpc.call(importMethod,[req])).status,'created');assert.equal(count(e,'task'),0)
+  return req
+}
+
+function localBtOptions(e,tracker) {
+  return {dir:e.dir,pause:'true','check-integrity':'true','bt-seed-unverified':'false',
+    'bt-hash-check-seed':'false','seed-time':'0','seed-ratio':'0','file-allocation':'none',
+    'enable-peer-exchange':'false','bt-enable-lpd':'false','bt-exclude-tracker':'*','bt-tracker':tracker.url}
+}
+
+async function seedLocalTorrent(e,tracker,torrent,name,files) {
+  await btFiles(e,name,files)
+  const gid=await e.rpc.addTorrent(torrent.toString('base64'),{...localBtOptions(e,tracker),
+    gid:'0123456789abcdef',pause:'false','bt-hash-check-seed':'true','seed-time':'1','seed-ratio':'1000'})
+  const total=files.reduce((sum,f)=>sum+f.bytes.length,0)
+  const ready=await until(()=>e.rpc.tellStatus(gid),s=>s.status==='error'||
+    (s.status==='active'&&s.completedLength===String(total)&&s.seeder==='true'))
+  assert.equal(ready.status,'active',ready.errorMessage)
+  await until(async()=>tracker.announces.filter(a=>a.port===e.listenPort).length,n=>n>0)
+  return gid
+}
+
+async function assertPausedWithoutPeerTraffic(e,seeder,seedGid,tracker,req,torrent,selection) {
+  await e.rpc.addTorrent(torrent.toString('base64'),{...localBtOptions(e,tracker),gid:req.gid,'select-file':selection})
+  const before=await Promise.all(req.files.map(f=>readFile(f.path)))
+  const progress=db(e,d=>d.prepare('SELECT * FROM task_progress').get())
+  for(let i=0;i<5;i++) {
+    const paused=await e.rpc.tellStatus(req.gid);assert.equal(paused.status,'paused')
+    assert.equal(paused.connections,'0');assert.equal(paused.uploadLength,'0')
+    assert.equal(tracker.announces.filter(a=>a.port===e.listenPort).length,0)
+    assert.equal((await seeder.rpc.tellStatus(seedGid)).uploadLength,'0')
+    await new Promise(r=>setTimeout(r,100))
+  }
+  assert.equal((await e.rpc.call(reconcile,[query(req)])).status,'created')
+  assert.deepEqual(db(e,d=>d.prepare('SELECT * FROM task_progress').get()),progress)
+  assert.deepEqual(await Promise.all(req.files.map(f=>readFile(f.path))),before)
+}
+
+// This is a synthetic shared-piece boundary sample, not a snapshot generated
+// by Motrix v1.8.19. The actual v1 fixture/provenance above remains unmodified.
+function syntheticSharedPieceSample() {
+  const pieceLength=16384,first=Buffer.alloc(8192,0x31),second=Buffer.alloc(24576,0x42)
+  const logical=Buffer.concat([first,second])
+  const pieces=Buffer.concat([0,16384].map(offset=>createHash('sha1').update(logical.subarray(offset,offset+pieceLength)).digest()))
+  const info={files:[{length:first.length,path:['neighbor.bin']},{length:second.length,path:['selected.bin']}],
+    name:'shared-piece-synthetic','piece length':pieceLength,pieces,private:1}
+  const infoHash=createHash('sha1').update(encode(info)).digest()
+  const torrent=encode({info})
+  const bytes=Buffer.alloc(59);let p=0
+  const u=(n,size)=>{size===8?bytes.writeBigUInt64BE(BigInt(n),p):size===4?bytes.writeUInt32BE(n,p):bytes.writeUInt16BE(n,p);p+=size}
+  u(1,2);u(1,4);u(20,4);infoHash.copy(bytes,p);p+=20;u(pieceLength,4);u(logical.length,8);u(0,8);u(1,4);bytes[p++]=0x40;u(0,4)
+  assert.equal(p,bytes.length)
+  return {torrent,control:bytes,infoHash:infoHash.toString('hex'),first,second,logical}
+}
 before(async()=>{
   root=await realpath(await mkdtemp(path.join(tmpdir(),'aria2-legacy-import-')))
   nativeControl=await readFile(new URL('partial.bin.aria2',fixture));nativePartial=gunzipSync(await readFile(new URL('partial.bin.gz',fixture)))
@@ -177,6 +282,66 @@ describe('legacy checkpoint engine import',()=>{
     const paused=await e.rpc.tellStatus(req.gid);assert.equal(paused.status,'paused');assert.equal(paused.files[0].selected,'true');assert.equal(paused.files[1].selected,'false');assert.equal(requests.length,beforeRequests)
     await e.rpc.unpause(req.gid);const done=await until(()=>e.rpc.tellStatus(req.gid),s=>['complete','error'].includes(s.status));assert.equal(done.status,'complete',done.errorMessage);assert.equal(done.completedLength,'16384');assert.equal(done.uploadLength,'0');assert.equal((await e.rpc.call(reconcile,[query(req)])).status,'consumed')
     assert.equal(sha(await readFile(entries[0].path)),sha(Buffer.alloc(16384,1)));assert.equal(sha(await readFile(entries[1].path)),sha(Buffer.alloc(16384,2)))
+  })
+  it('fills missing native v1 BT pieces from an isolated loopback aria2 seeder after explicit activation',{timeout:60000},async t=>{
+    const e=await engine(t,`${root}/bt-peer-native/download`),seeder=await engine(t,`${root}/bt-peer-native/seed`)
+    const bytes=await readFile(new URL('fixture-bundle.aria2',fixture)),torrent=await readFile(new URL('a16dc78c94ce589ed4666ab32285f2d188edf26f.torrent',fixture))
+    assert.equal(sha(bytes),'9eca779c68d5814eea38b1f4b2c7d73e528a88993f8ade862ca8db90adc5b7eb')
+    assert.equal(sha(torrent),'76dc89394c6ebc46b5f863e526e037e3f3da37f0ee3e5a7069d73017bc90f10b')
+    const tracker=await localTracker(t,seeder,e,'45c7c651e500cc0ceaa544d6fbafcb21b8cd52f8')
+    const full=[{name:'first.bin',bytes:Buffer.alloc(16384,1)},{name:'second.bin',bytes:Buffer.alloc(16384,2)}]
+    const seedGid=await seedLocalTorrent(seeder,tracker,torrent,'fixture-bundle',full)
+    // The control/torrent are unmodified real v1 snapshots. This shorter
+    // payload prefix is constructed from their known data recipe to force
+    // peer recovery; it is not claimed to be the original saved BT payload.
+    const req=await importBt(e,'fixture-bundle',bytes,[{...full[0],bytes:full[0].bytes.subarray(0,8192),length:16384},full[1]])
+    const httpRequests=requests.length
+    await assertPausedWithoutPeerTraffic(e,seeder,seedGid,tracker,req,torrent,'1')
+    assert.equal((await e.rpc.tellStatus(req.gid)).files[1].selected,'false')
+    await e.rpc.unpause(req.gid)
+    const done=await until(()=>e.rpc.tellStatus(req.gid),s=>['complete','error'].includes(s.status),45000)
+    assert.equal(done.status,'complete',done.errorMessage);assert.equal(done.completedLength,'16384')
+    assert.equal(done.files[1].selected,'false')
+    assert.equal(sha(await readFile(req.files[0].path)),sha(full[0].bytes))
+    assert.equal(sha(await readFile(req.files[1].path)),sha(full[1].bytes))
+    assert.ok(Number((await seeder.rpc.tellStatus(seedGid)).uploadLength)>=16384,'the real local seeder supplied the missing piece')
+    assert.ok(tracker.announces.some(a=>a.port===e.listenPort))
+    assert.deepEqual(tracker.rejected,[]);assert.equal(requests.length,httpRequests,'no HTTP/web-seed fallback')
+    assert.equal((await e.rpc.call(reconcile,[query(req)])).status,'consumed')
+    t.diagnostic(`native v1 missing-piece recovery: downloader uploadLength=${done.uploadLength}; no zero-upload guarantee`)
+  })
+  it('repairs an unselected adjacent file when a synthetic selected file shares its missing BT piece',{timeout:60000},async t=>{
+    const sample=syntheticSharedPieceSample()
+    const e=await engine(t,`${root}/bt-peer-shared/download`),seeder=await engine(t,`${root}/bt-peer-shared/seed`)
+    const tracker=await localTracker(t,seeder,e,sample.infoHash)
+    const full=[{name:'neighbor.bin',bytes:sample.first},{name:'selected.bin',bytes:sample.second}]
+    const seedGid=await seedLocalTorrent(seeder,tracker,sample.torrent,'shared-piece-synthetic',full)
+    const partial=Buffer.concat([Buffer.alloc(8192),sample.second.subarray(8192)])
+    const req=await importBt(e,'shared-piece-synthetic',sample.control,[{name:'neighbor.bin',bytes:Buffer.alloc(8192)},
+      {name:'selected.bin',bytes:partial}])
+    const inspection=await e.rpc.call(inspect,[{controlFile:req.controlFile}])
+    assert.equal(inspection.completedLength,'16384');assert.deepEqual(inspection.ranges,[{offset:'16384',length:'16384'}])
+    const neighborBefore=await readFile(req.files[0].path),httpRequests=requests.length
+    await assertPausedWithoutPeerTraffic(e,seeder,seedGid,tracker,req,sample.torrent,'2')
+    const paused=await e.rpc.tellStatus(req.gid)
+    assert.equal(paused.files[0].selected,'false');assert.equal(paused.files[1].selected,'true')
+    await e.rpc.unpause(req.gid)
+    const done=await until(()=>e.rpc.tellStatus(req.gid),s=>['complete','error'].includes(s.status),45000)
+    assert.equal(done.status,'complete',done.errorMessage)
+    // Native task progress rounds the selection to complete pieces, so it
+    // includes the adjacent 8 KiB although only the 24 KiB file is selected.
+    assert.equal(done.totalLength,'32768');assert.equal(done.completedLength,'32768')
+    assert.equal(done.files[1].length,'24576');assert.equal(done.files[1].completedLength,'24576')
+    assert.equal(done.files[0].selected,'false');assert.equal(done.files[1].selected,'true')
+    const neighbor=await readFile(req.files[0].path),selected=await readFile(req.files[1].path)
+    assert.notDeepEqual(neighbor,neighborBefore,'native BT writes the unselected bytes needed for the shared piece')
+    assert.equal(sha(neighbor),sha(sample.first));assert.equal(sha(selected),sha(sample.second))
+    assert.equal(sha(Buffer.concat([neighbor,selected])),sha(sample.logical))
+    assert.ok(Number((await seeder.rpc.tellStatus(seedGid)).uploadLength)>=16384,'a real peer supplied shared piece zero')
+    assert.ok(tracker.announces.some(a=>a.port===e.listenPort))
+    assert.deepEqual(tracker.rejected,[]);assert.equal(requests.length,httpRequests,'no HTTP/web-seed fallback')
+    assert.equal((await e.rpc.call(reconcile,[query(req)])).status,'consumed')
+    t.diagnostic(`synthetic shared-piece recovery: unselected neighbor changed; downloader uploadLength=${done.uploadLength}`)
   })
   it('restores native partial blocks under the reserved GID only after explicit unpause',async t=>{
     const e=await engine(t,`${root}/restore`),req=await request(e,'restore',{bytes:nativeControl,data:nativePartial});const beforeRequests=requests.length
