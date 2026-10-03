@@ -36,18 +36,31 @@
 #define D_LEGACY_CHECKPOINT_IMPORT_H
 #include "common.h"
 #include <string>
+#include <memory>
+#include <vector>
 namespace aria2 {
 class DownloadEngine;
 class DownloadContext;
 class Sqlite3PersistenceStore;
+class Option;
+class RequestGroup;
 bool legacyCheckpointImportAvailable(DownloadEngine* engine);
+bool legacyTorrentMetadataAvailable(DownloadEngine* engine);
 #ifdef HAVE_SQLITE3
 // Called before native restoration of an imported checkpoint. Rechecks the
 // original read-only payload identities and consumes the receipt atomically.
 bool legacyCheckpointPending(Sqlite3PersistenceStore& store,
                              const std::string& path);
 void consumeLegacyCheckpoint(Sqlite3PersistenceStore& store,
-                             const std::string& path, DownloadContext& context);
+                             const std::string& path, DownloadContext& context,
+                             bool consume = true);
+void validateLegacyTorrentMetadata(Sqlite3PersistenceStore& store,
+                                   const std::string& gid);
+bool restoreLegacyTorrentTask(Sqlite3PersistenceStore& store,
+                              const std::string& gid,
+                              const std::string& serialized,
+                              const std::shared_ptr<Option>& option,
+                              std::vector<std::shared_ptr<RequestGroup>>& out);
 #endif
 } // namespace aria2
 #endif

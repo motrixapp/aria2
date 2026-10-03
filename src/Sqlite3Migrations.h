@@ -43,7 +43,7 @@ namespace aria2 {
 
 class Sqlite3PersistenceStore;
 
-constexpr int kCurrentSchemaVersion = 4;
+constexpr int kCurrentSchemaVersion = 5;
 
 void migrateIfNeeded(Sqlite3PersistenceStore& store);
 

@@ -382,6 +382,7 @@ void Sqlite3BtProgressInfoFile::save()
 void Sqlite3BtProgressInfoFile::validateFileOpen(bool destructive)
 {
   try {
+    validateLegacyTorrentMetadata(*store_, gidHex_);
     if (!legacyCheckpointPending(*store_, outPath_)) {
       return;
     }

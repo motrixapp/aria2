@@ -53,9 +53,10 @@
 #include "RequestGroupMan.h"
 #include "SessionSerializer.h"
 #include "Sqlite3PersistenceStore.h"
-#include "download_helper.h"
-#include "fmt.h"
-#include "prefs.h"
+#  include "LegacyCheckpointImport.h"
+#  include "download_helper.h"
+#  include "fmt.h"
+#  include "prefs.h"
 
 namespace aria2 {
 
@@ -110,7 +111,7 @@ const char* const kSelectQueuePosSql =
     "SELECT queue_position FROM task WHERE gid = ?";
 
 const char* const kSelectSerializedSql =
-    "SELECT serialized FROM task ORDER BY queue_position ASC";
+    "SELECT serialized,gid FROM task ORDER BY queue_position ASC";
 
 const char* const kShiftForwardSql =
     "UPDATE task SET queue_position = queue_position - 1"
@@ -333,9 +334,11 @@ void Sqlite3SessionStore::removeOrphanTasks(
 
   store_->withTransaction([&]() {
     if (liveGids.empty()) {
-      // No live tasks → delete all task rows.
-      if (sqlite3_exec(db, "DELETE FROM task", nullptr, nullptr, nullptr) !=
-          SQLITE_OK) {
+      // Keep invalidated metadata bindings as durable recovery evidence.
+      if (sqlite3_exec(db,
+                       "DELETE FROM task WHERE gid NOT IN (SELECT gid FROM "
+                       "legacy_torrent_metadata WHERE invalidated=1)",
+                       nullptr, nullptr, nullptr) != SQLITE_OK) {
         throw DL_ABORT_EX(
             fmt("sqlite3-persistence: DELETE FROM task failed: %s",
                 sqlite3_errmsg(db)));
@@ -349,7 +352,8 @@ void Sqlite3SessionStore::removeOrphanTasks(
     for (size_t i = 0; i < liveGids.size(); ++i) {
       sql += (i == 0 ? "?" : ", ?");
     }
-    sql += ")";
+    sql += ") AND gid NOT IN (SELECT gid FROM legacy_torrent_metadata "
+           "WHERE invalidated=1)";
 
     StmtGuard stmt;
     if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt.stmt, nullptr) !=
@@ -393,13 +397,17 @@ void Sqlite3SessionStore::loadActiveTasksInto(
             sqlite3_errmsg(db)));
   }
 
-  std::string combined;
+  const auto firstLoaded = out.size();
   int rc;
   while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
     const char* text =
         reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
     if (text) {
-      combined += text;
+      const auto gid = columnText(stmt, 1);
+      if (!restoreLegacyTorrentTask(*store_, gid, text, op, out)) {
+        std::stringstream input(text);
+        createRequestGroupForUriList(out, op, input);
+      }
     }
   }
   if (rc != SQLITE_DONE) {
@@ -408,21 +416,14 @@ void Sqlite3SessionStore::loadActiveTasksInto(
             sqlite3_errmsg(db)));
   }
 
-  if (combined.empty()) {
-    return;
-  }
-
-  const auto firstLoaded = out.size();
-  std::stringstream ss(combined);
-  createRequestGroupForUriList(out, op, ss);
   for (auto i = firstLoaded; i < out.size(); ++i) {
     restoreTaskCookies(out[i]);
   }
 }
 
-void Sqlite3SessionStore::upsertTask(
-    const std::shared_ptr<RequestGroup>& rg,
-    bool persistTaskCookieSnapshot)
+void Sqlite3SessionStore::upsertTask(const std::shared_ptr<RequestGroup>& rg,
+                                     bool persistTaskCookieSnapshot,
+                                     bool useExistingTransaction)
 {
   // Option A: pass nullptr — renderOneInto never dereferences rgman_.
   SessionSerializer ser(nullptr);
@@ -445,7 +446,7 @@ void Sqlite3SessionStore::upsertTask(
       rg->getOption()->getAsBool(PREF_REQUIRE_TASK_COOKIES);
   bool persistedTaskCookies = false;
 
-  store_->withTransaction([&]() {
+  auto persist = [&]() {
     StmtGuard stmt;
     if (sqlite3_prepare_v2(db, kUpsertTaskSql, -1, &stmt.stmt, nullptr) !=
         SQLITE_OK) {
@@ -511,7 +512,17 @@ void Sqlite3SessionStore::upsertTask(
             sqlite3_errmsg(db)));
       }
     }
-  });
+  };
+  if (useExistingTransaction) {
+    if (sqlite3_get_autocommit(db)) {
+      throw DL_ABORT_EX(
+          "sqlite3-persistence: existing task transaction required");
+    }
+    persist();
+  }
+  else {
+    store_->withTransaction(persist);
+  }
   if (persistedTaskCookies || !requiresTaskCookies) {
     dirtyTaskCookieGids_.erase(gidHex);
   }

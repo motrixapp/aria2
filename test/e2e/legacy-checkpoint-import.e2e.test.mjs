@@ -1,7 +1,7 @@
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { createServer } from 'node:http'
+import { createServer, request as forwardHttp } from 'node:http'
 import { chmod, copyFile, link, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -26,15 +26,15 @@ function control({ torrent=false, bitfield=0x80, partial=true }={}) {
   assert.equal(p,bytes.length);return bytes
 }
 async function until(fn,predicate,timeout=15000){const end=Date.now()+timeout;let value;do{value=await fn();if(predicate(value))return value;await new Promise(r=>setTimeout(r,25))}while(Date.now()<end);assert.fail(`condition timed out: ${JSON.stringify(value)}`)}
-async function engine(t,dir,{ sqlite=true, auth=true }={}) {
+async function engine(t,dir,{ sqlite=true, auth=true, bin, extra=[] }={}) {
   await mkdir(dir,{recursive:true});const { rpcPort, listenPort }=allocPorts()
-  const proc=await spawnAria2({args:[
+  const proc=await spawnAria2({bin,args:[
     '--no-conf=true','--no-netrc=true','--enable-rpc=true','--rpc-listen-all=false',`--rpc-listen-port=${rpcPort}`,
     ...(auth?[`--rpc-secret=${secret}`]:[]),'--enable-dht=false','--enable-dht6=false','--enable-peer-exchange=false','--bt-enable-lpd=false',
     '--disable-ipv6=true','--interface=127.0.0.1',`--listen-port=${listenPort}`,'--all-proxy=','--max-concurrent-downloads=2','--file-allocation=none','--auto-file-renaming=false','--allow-overwrite=false',
     '--console-log-level=error','--summary-interval=0',`--dir=${dir}`,`--log=${dir}/engine.log`,'--log-level=debug',
     `--save-session=${dir}/session.txt`,'--force-save=true','--save-session-interval=1',`--enable-sqlite3-persistence=${sqlite}`,`--sqlite3-db-path=${dir}/session.db`,
-    '--split=1','--max-connection-per-server=1','--max-tries=1','--seed-time=0','--pause=true',
+    '--split=1','--max-connection-per-server=1','--max-tries=1','--seed-time=0','--pause=true',...extra,
   ]});t.after(()=>stopInstance(proc));const rpc=new Aria2Rpc({port:rpcPort,secret:auth?secret:''})
   await until(()=>rpc.call('aria2.getVersion').catch(()=>null),Boolean)
   return {rpc,dir,listenPort,stop:signal=>stopInstance(proc,signal)}
@@ -153,6 +153,42 @@ function syntheticSharedPieceSample() {
   assert.equal(p,bytes.length)
   return {torrent,control:bytes,infoHash:infoHash.toString('hex'),first,second,logical}
 }
+
+async function durableBtRequest(e,name) {
+  const controlBytes=await readFile(new URL('fixture-bundle.aria2',fixture))
+  const torrent=await readFile(new URL('a16dc78c94ce589ed4666ab32285f2d188edf26f.torrent',fixture))
+  const req=await importBt(e,'fixture-bundle',controlBytes,[{name:'first.bin',bytes:Buffer.alloc(16384,1)},
+    {name:'second.bin',bytes:Buffer.alloc(16384,2)}])
+  const backup=`${root}/backups/${name}`;await mkdir(backup,{recursive:true})
+  const metadataFile=`${backup}/${sha(torrent)}.torrent`;await writeFile(metadataFile,torrent,{mode:0o600})
+  const legacyMetadata=`${e.dir}/a16dc78c94ce589ed4666ab32285f2d188edf26f.torrent`
+  await writeFile(legacyMetadata,Buffer.from('protected legacy metadata bytes'),{mode:0o600})
+  return {req,metadataFile,torrent,legacyMetadata,activation:{token:req.token,targetPath:req.targetPath,
+    metadataFile,metadataDigest:sha(torrent),metadata:torrent.toString('base64'),options:{gid:req.gid,pause:'true',dir:e.dir,
+      'select-file':'1','check-integrity':'true','bt-seed-unverified':'false','bt-hash-check-seed':'false',
+      'seed-time':'0','seed-ratio':'0','rpc-save-upload-metadata':'false'}}}
+}
+
+async function dropActivationResponse(t,e,activation) {
+  // Forward the actual RPC, then close the client socket as soon as the
+  // engine sends response headers. The caller sees transport failure even
+  // though the engine has already met its durable-before-response contract.
+  let complete
+  const acknowledged=new Promise(resolve=>complete=resolve)
+  const proxy=createServer((req,res)=>{
+    const upstream=forwardHttp(e.rpc.url,{method:'POST',headers:{'content-type':'application/json',
+      'content-length':req.headers['content-length']}},reply=>{
+      const chunks=[];reply.on('data',b=>chunks.push(b));reply.on('end',()=>complete(JSON.parse(Buffer.concat(chunks))))
+      res.destroy()
+    })
+    upstream.on('error',error=>res.destroy(error));req.pipe(upstream)
+  })
+  await new Promise(r=>proxy.listen(0,'127.0.0.1',r))
+  t.after(async()=>{proxy.closeAllConnections();await new Promise(r=>proxy.close(r))})
+  const client=new Aria2Rpc({port:proxy.address().port,secret})
+  await assert.rejects(client.call('aria2.addLegacyTorrentV1',[activation]),/fetch failed|socket|terminated/)
+  const actual=await acknowledged;assert.equal(actual.result,activation.options.gid,JSON.stringify(actual))
+}
 before(async()=>{
   root=await realpath(await mkdtemp(path.join(tmpdir(),'aria2-legacy-import-')))
   nativeControl=await readFile(new URL('partial.bin.aria2',fixture));nativePartial=gunzipSync(await readFile(new URL('partial.bin.gz',fixture)))
@@ -184,6 +220,8 @@ describe('legacy checkpoint engine import',()=>{
     for(const [name,opts] of [['text',{sqlite:false}],['noauth',{auth:false}]]){
       const e=await engine(t,`${root}/${name}`,opts);assert.ok(!(await e.rpc.call('aria2.getVersion')).enabledFeatures.includes('LegacyCheckpointImportV1'))
       await assert.rejects(e.rpc.call(inspect,[{controlFile:control().toString('base64')}]),/unavailable/)
+      assert.ok(!(await e.rpc.call('aria2.getVersion')).enabledFeatures.includes('LegacyTorrentMetadataV1'))
+      await assert.rejects(e.rpc.call('aria2.addLegacyTorrentV1',[{}]),/unavailable/)
     }
   })
   it('commits checkpoint+receipt atomically, rejects changed inputs and reconciles across save/restart',async t=>{
@@ -282,6 +320,106 @@ describe('legacy checkpoint engine import',()=>{
     const paused=await e.rpc.tellStatus(req.gid);assert.equal(paused.status,'paused');assert.equal(paused.files[0].selected,'true');assert.equal(paused.files[1].selected,'false');assert.equal(requests.length,beforeRequests)
     await e.rpc.unpause(req.gid);const done=await until(()=>e.rpc.tellStatus(req.gid),s=>['complete','error'].includes(s.status));assert.equal(done.status,'complete',done.errorMessage);assert.equal(done.completedLength,'16384');assert.equal(done.uploadLength,'0');assert.equal((await e.rpc.call(reconcile,[query(req)])).status,'consumed')
     assert.equal(sha(await readFile(entries[0].path)),sha(Buffer.alloc(16384,1)));assert.equal(sha(await readFile(entries[1].path)),sha(Buffer.alloc(16384,2)))
+  })
+  it('records the ordinary unsaved-metadata paused BT restart failure without inventing a recoverable task',async t=>{
+    const dir=`${root}/bt-undurable`;let e=await engine(t,dir,{extra:['--save-session-interval=0']})
+    const {req,torrent}=await durableBtRequest(e,'undurable')
+    await e.rpc.addTorrent(torrent.toString('base64'),{gid:req.gid,pause:'true',dir:e.dir,
+      'select-file':'1','rpc-save-upload-metadata':'false','check-integrity':'true'})
+    assert.equal((await e.rpc.tellStatus(req.gid)).status,'paused');assert.equal(count(e,'task'),0)
+    await e.stop('SIGKILL');e=await engine(t,dir,{extra:['--save-session-interval=0']})
+    await assert.rejects(e.rpc.tellStatus(req.gid),/not found/)
+    assert.equal((await e.rpc.call(reconcile,[query(req)])).status,'created')
+    t.diagnostic('baseline reproduced: ordinary addTorrent + rpc-save-upload-metadata=false loses paused task on restart')
+  })
+  it('atomically binds a read-only metadata reference and restores a lost paused RPC across shutdown and SIGKILL',async t=>{
+    for(const signal of ['SIGTERM','SIGKILL']) {
+      const dir=`${root}/bt-durable-${signal}`;let e=await engine(t,dir,{extra:['--save-session-interval=0']})
+      const state=await durableBtRequest(e,signal),before=await readFile(state.legacyMetadata)
+      assert.ok((await e.rpc.call('aria2.getVersion')).enabledFeatures.includes('LegacyTorrentMetadataV1'))
+      await dropActivationResponse(t,e,state.activation)
+      assert.equal(count(e,'task'),1);assert.equal(count(e,'legacy_torrent_metadata'),1)
+      assert.equal((await e.rpc.tellStatus(state.req.gid)).status,'paused')
+      await assert.rejects(e.rpc.call('aria2.addLegacyTorrentV1',[state.activation]),/already bound/)
+      await e.stop(signal);e=await engine(t,dir,{extra:['--save-session-interval=0']})
+      const paused=await e.rpc.tellStatus(state.req.gid)
+      assert.equal(paused.status,'paused');assert.equal(paused.gid,state.req.gid)
+      assert.equal(paused.files[0].selected,'true');assert.equal(paused.files[1].selected,'false')
+      assert.equal(paused.files[0].path,state.req.files[0].path)
+      assert.equal((await e.rpc.call(reconcile,[query(state.req)])).status,'created')
+      await assert.rejects(e.rpc.call('aria2.addLegacyTorrentV1',[state.activation]),/already bound/)
+      assert.deepEqual(await readFile(state.legacyMetadata),before);assert.deepEqual(await readFile(state.metadataFile),state.torrent)
+      await e.rpc.unpause(state.req.gid)
+      const done=await until(()=>e.rpc.tellStatus(state.req.gid),s=>['complete','error'].includes(s.status))
+      assert.equal(done.status,'complete',done.errorMessage);assert.equal(done.completedLength,'16384')
+      assert.equal((await e.rpc.call(reconcile,[query(state.req)])).status,'consumed')
+      assert.equal(sha(await readFile(state.req.files[0].path)),sha(Buffer.alloc(16384,1)))
+      assert.deepEqual(await readFile(state.legacyMetadata),before)
+    }
+  })
+  it('rejects replaced, changed, missing and symlink metadata after restart without ordinary-loader fallback',async t=>{
+    for(const variant of ['replaced','changed','missing','symlink']) {
+      const dir=`${root}/bt-metadata-${variant}`;let e=await engine(t,dir,{extra:['--save-session-interval=0']})
+      const state=await durableBtRequest(e,variant)
+      await e.rpc.call('aria2.addLegacyTorrentV1',[state.activation])
+      const progress=db(e,d=>d.prepare('SELECT * FROM task_progress').get())
+      const payloadBefore=await Promise.all(state.req.files.map(f=>readFile(f.path)))
+      await e.stop('SIGKILL')
+      if(variant==='changed')await writeFile(state.metadataFile,Buffer.from('changed metadata bytes'),{mode:0o600})
+      else {
+        await rename(state.metadataFile,`${state.metadataFile}.old`)
+        if(variant==='replaced')await writeFile(state.metadataFile,state.torrent,{mode:0o600})
+        if(variant==='symlink')await symlink(`${state.metadataFile}.old`,state.metadataFile)
+      }
+      e=await engine(t,dir,{extra:['--save-session-interval=0']})
+      await assert.rejects(e.rpc.tellStatus(state.req.gid),/not found/)
+      assert.equal((await e.rpc.call(reconcile,[query(state.req)])).status,'consumed')
+      assert.equal(count(e,'task'),1);assert.equal(db(e,d=>d.prepare('SELECT invalidated FROM legacy_torrent_metadata').get().invalidated),1)
+      await e.rpc.call('aria2.saveSession')
+      assert.equal(count(e,'task'),1);assert.deepEqual(db(e,d=>d.prepare('SELECT * FROM task_progress').get()),progress)
+      assert.deepEqual(await Promise.all(state.req.files.map(f=>readFile(f.path))),payloadBefore)
+      if(variant==='symlink'||variant==='replaced')await rm(state.metadataFile)
+      if(variant==='changed')await writeFile(state.metadataFile,state.torrent,{mode:0o600})
+      else await rename(`${state.metadataFile}.old`,state.metadataFile)
+      await assert.rejects(e.rpc.call('aria2.addLegacyTorrentV1',[state.activation]),/intact created receipt/)
+      await e.stop();e=await engine(t,dir,{extra:['--save-session-interval=0']})
+      await assert.rejects(e.rpc.tellStatus(state.req.gid),/not found/)
+      assert.equal((await e.rpc.call(reconcile,[query(state.req)])).status,'consumed')
+    }
+  })
+  it('rolls back metadata grants with a failed task insert and rejects mismatched metadata bytes',async t=>{
+    const e=await engine(t,`${root}/bt-metadata-atomic`),state=await durableBtRequest(e,'atomic')
+    for(const activation of [{...state.activation,metadataDigest:'00'.repeat(32)},
+      {...state.activation,metadata:Buffer.from('different bytes').toString('base64')},
+      {...state.activation,options:{...state.activation.options,pause:'false'}}]) {
+      await assert.rejects(e.rpc.call('aria2.addLegacyTorrentV1',[activation]))
+    }
+    db(e,d=>d.prepare("INSERT INTO task(gid,state,serialized,queue_position,digest,created_at,updated_at) VALUES(?,'paused','unrelated durable row',0,X'01',1,1)").run(state.req.gid))
+    await assert.rejects(e.rpc.call('aria2.addLegacyTorrentV1',[state.activation]),/durable task GID conflict/)
+    assert.equal(db(e,d=>d.prepare('SELECT serialized FROM task WHERE gid=?').get(state.req.gid)).serialized,'unrelated durable row')
+    assert.equal(count(e,'legacy_torrent_metadata'),0)
+    db(e,d=>d.prepare('DELETE FROM task WHERE gid=?').run(state.req.gid))
+    db(e,d=>d.exec("CREATE TRIGGER reject_task BEFORE INSERT ON task BEGIN SELECT RAISE(ABORT,'injected durable task rejection'); END"))
+    await assert.rejects(e.rpc.call('aria2.addLegacyTorrentV1',[state.activation]),/UPSERT task failed/)
+    assert.equal(count(e,'task'),0);assert.equal(count(e,'legacy_torrent_metadata'),0)
+    await assert.rejects(e.rpc.tellStatus(state.req.gid),/not found/)
+    assert.equal((await e.rpc.call(reconcile,[query(state.req)])).status,'created')
+    db(e,d=>d.exec('DROP TRIGGER reject_task'))
+    assert.equal(await e.rpc.call('aria2.addLegacyTorrentV1',[state.activation]),state.req.gid)
+  })
+  it('requires the new runtime capability and makes the schema4 binary refuse schema5',{skip:!process.env.ARIA2_SCHEMA4_BIN},async t=>{
+    const old=await engine(t,`${root}/bt-old-capability`,{bin:process.env.ARIA2_SCHEMA4_BIN})
+    assert.ok(!(await old.rpc.call('aria2.getVersion')).enabledFeatures.includes('LegacyTorrentMetadataV1'))
+    await assert.rejects(old.rpc.call('aria2.addLegacyTorrentV1',[{}]),/No such method|not found/)
+    await old.stop()
+    const current=await engine(t,`${root}/bt-schema5`);await current.stop()
+    const proc=await spawnAria2({bin:process.env.ARIA2_SCHEMA4_BIN,args:['--no-conf=true','--no-netrc=true',
+      '--enable-rpc=false','--enable-dht=false','--enable-sqlite3-persistence=true',`--sqlite3-db-path=${current.dir}/session.db`]})
+    let output='';proc.stdout.on('data',b=>output+=b);proc.stderr.on('data',b=>output+=b)
+    t.after(()=>stopInstance(proc))
+    const code=await new Promise(r=>proc.once('exit',r));assert.notEqual(code,0)
+    assert.match(output,/schema version 5 is newer.*supports \(4\)/s)
+    t.diagnostic('schema4 engine refused newer metadata grants before restoring tasks')
   })
   it('fills missing native v1 BT pieces from an isolated loopback aria2 seeder after explicit activation',{timeout:60000},async t=>{
     const e=await engine(t,`${root}/bt-peer-native/download`),seeder=await engine(t,`${root}/bt-peer-native/seed`)

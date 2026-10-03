@@ -238,6 +238,14 @@ protected:
 public:
   static const char* getMethodName() { return "aria2.addTorrent"; }
 };
+class AddLegacyTorrentV1RpcMethod : public RpcMethod {
+protected:
+  std::unique_ptr<ValueBase> process(const RpcRequest& req,
+                                     DownloadEngine* e) CXX11_OVERRIDE;
+
+public:
+  static const char* getMethodName() { return "aria2.addLegacyTorrentV1"; }
+};
 #endif // ENABLE_BITTORRENT
 
 #ifdef ENABLE_METALINK

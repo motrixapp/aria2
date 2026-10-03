@@ -116,6 +116,50 @@ returns to its original state. This resolves a lost import response or restart w
 retrying a mutation blindly. `created` includes proof of the original GID,
 metadata, bitfields and native trailer still matching the control snapshot.
 
+`aria2.addLegacyTorrentV1` activates a created BT receipt with a durable,
+read-only reference to the application's authorized torrent backup. It requires
+both runtime capabilities, `LegacyCheckpointImportV1` and
+`LegacyTorrentMetadataV1`. The latter also requires a usable SQLite task store
+and a BitTorrent-enabled build. This method accepts:
+
+```json
+{
+  "token": "application_unique_import_token",
+  "targetPath": "/confirmed/downloads/fixture-bundle",
+  "metadataFile": "/application/backups/authorized-torrents/example.torrent",
+  "metadataDigest": "<SHA-256 of the complete torrent bytes>",
+  "metadata": "<canonical base64 torrent bytes>",
+  "options": {
+    "gid": "0123456789abcdef",
+    "dir": "/confirmed/downloads",
+    "pause": "true",
+    "check-integrity": "true",
+    "bt-seed-unverified": "false",
+    "select-file": "1"
+  }
+}
+```
+
+It returns the reserved GID string. The token, target, GID, decoded torrent,
+piece geometry and complete native file map must match the intact created
+receipt. `pause=true`, `check-integrity=true`, and `bt-seed-unverified=false`
+are mandatory. The engine forces `rpc-save-upload-metadata=false`; it neither
+saves uploaded metadata in the payload directory nor changes the payload base
+path. The backup uses the same canonical-path, ownership, regular-file,
+single-link and no-follow checks as payloads. Its digest must match both the
+read-only file snapshot and the RPC bytes. A metadata inode cannot alias any
+imported payload. Torrent bytes are bounded to 64 MiB, subject to the configured
+RPC request-size limit.
+
+Before returning, one SQLite transaction commits the immutable metadata path,
+digest and file identity together with the paused task row. This survives
+SIGKILL without a session-save interval or explicit `saveSession`. Repeating
+the activation after a lost response fails without creating another task or
+replacing the grant; reconcile the receipt and query its GID instead. Ordinary
+`addTorrent` with `rpc-save-upload-metadata=false` has no durable metadata source
+and is unsuitable for this activation protocol. Never silently fall back to it
+when the new runtime capability is absent.
+
 ## Native restoration and recovery
 
 The checkpoint survives session saves and engine restart without a task row
@@ -130,6 +174,18 @@ transfer. Reconciliation then reports `consumed` independently of later progress
 or completion cleanup. Imported checkpoints are not resumable under another
 GID or with changed metadata. No special startup flag beyond the existing
 SQLite/RPC configuration is required.
+
+Every durable legacy BT task is restored **paused**, including a task that was
+active before shutdown. On restart the engine verifies the backup's persisted
+identity and whole-file SHA-256, then parses verified bytes from RAM. Metadata
+replacement, mutation, removal or a symlink invalidates the grant permanently;
+the task is not queued and never falls back to the ordinary torrent-path
+loader. The invalidated grant and its task row remain as durable evidence across
+routine task snapshots. Restoring the old file later cannot revive activation.
+The application must query the restored GID, reconcile the receipt and request
+explicit unpause after successful recovery; native integrity checking precedes
+transfer. `consumed` can mean either successful native restoration or terminal
+invalidation, so it alone does not prove a resumable task exists.
 
 Receipt claims deliberately remain conservative after consumption. There is
 no cleanup/undo RPC in this version. Cross-platform moves, absent unselected BT
@@ -154,8 +210,9 @@ external writers; the application must establish that the old engine is closed.
 Native `.aria2` saving shares the extracted v1 serializer with the importer.
 The SQLite progress layout and in-flight blob remain the native loader's layout.
 Database schema 4 adds import receipts/file claims while preserving schema 3
-checkpoints. Older binaries refuse the newer schema rather than silently using
-it without the restoration checks.
+checkpoints. Schema 5 adds durable BT metadata grants while preserving existing
+tasks, checkpoints and receipt claims. Older binaries refuse the newer schema
+rather than silently using it without the restoration checks.
 
 ## Local verification
 
@@ -181,3 +238,8 @@ and trusted final SHA-256. The BT test restores the actual multi-file checkpoint
 keeps selection paused until explicit activation, verifies existing pieces and
 checks payload preservation. Synthetic codec/security tests cover malformed
 input, transactions, token conflicts, restart, replacement, aliases and ownership.
+Durable metadata tests preserve the ordinary-add restart failure as a regression
+baseline, drop a real activation RPC response, restart after graceful shutdown
+and SIGKILL, and require the same paused GID without a duplicate. They also cover
+atomic task/grant rollback, changed or replaced backups, missing files, symlinks,
+schema upgrades and an older schema-4 binary refusing schema 5.

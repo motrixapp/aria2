@@ -406,6 +406,27 @@ void migrate_v3_to_v4(Sqlite3PersistenceStore& store)
   });
 }
 
+void migrate_v4_to_v5(Sqlite3PersistenceStore& store)
+{
+  store.withTransaction([&]() {
+    const char* sql =
+        "CREATE TABLE legacy_torrent_metadata ("
+        " token TEXT PRIMARY KEY REFERENCES legacy_checkpoint_import(token),"
+        " gid TEXT NOT NULL UNIQUE, metadata_path TEXT NOT NULL,"
+        " metadata_digest TEXT NOT NULL, device TEXT NOT NULL, inode TEXT NOT "
+        "NULL,"
+        " size TEXT NOT NULL, mtime_ns TEXT NOT NULL, ctime_ns TEXT NOT NULL,"
+        " invalidated INTEGER NOT NULL DEFAULT 0);"
+        "UPDATE meta SET value='5' WHERE key='schema_version';"
+        "PRAGMA user_version=5;";
+    if (sqlite3_exec(store.raw(), sql, nullptr, nullptr, nullptr) !=
+        SQLITE_OK) {
+      throw DL_ABORT_EX(
+          "sqlite3-persistence: legacy metadata migration failed");
+    }
+  });
+}
+
 struct Migration {
   int from;
   int to;
@@ -413,10 +434,9 @@ struct Migration {
 };
 
 static const Migration kMigrations[] = {
-    {0, 1, &migrate_v0_to_v1},
-    {1, 2, &migrate_v1_to_v2},
-    {2, 3, &migrate_v2_to_v3},
-    {3, 4, &migrate_v3_to_v4},
+    {0, 1, &migrate_v0_to_v1}, {1, 2, &migrate_v1_to_v2},
+    {2, 3, &migrate_v2_to_v3}, {3, 4, &migrate_v3_to_v4},
+    {4, 5, &migrate_v4_to_v5},
 };
 
 } // namespace

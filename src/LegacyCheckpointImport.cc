@@ -38,6 +38,15 @@
 #include "DownloadEngine.h"
 #include "DownloadContext.h"
 #include "FileEntry.h"
+#include "RequestGroup.h"
+#include "RequestGroupMan.h"
+#include "download_helper.h"
+#include "MemBufferReader.h"
+#include "UriListParser.h"
+#include "OptionHandler.h"
+#include "OptionParser.h"
+#include "LogFactory.h"
+#include "Logger.h"
 #include "MessageDigest.h"
 #ifdef ENABLE_BITTORRENT
 #  include "bittorrent_helper.h"
@@ -52,8 +61,10 @@
 #include <set>
 #include <map>
 #include <vector>
+#include <cerrno>
 #ifdef HAVE_SQLITE3
 #  include "Sqlite3PersistenceStore.h"
+#  include "Sqlite3SessionStore.h"
 #endif
 #ifndef __MINGW32__
 #  include <fcntl.h>
@@ -72,6 +83,14 @@ bool legacyCheckpointImportAvailable(DownloadEngine* e)
   return e && e->getSqlite3Store() && e->getSqlite3Store()->raw() &&
          !e->getOption()->get(PREF_RPC_SECRET).empty() &&
          MessageDigest::supports("sha-256");
+#else
+  return false;
+#endif
+}
+bool legacyTorrentMetadataAvailable(DownloadEngine* e)
+{
+#if defined(LEGACY_SAFE_POSIX) && defined(ENABLE_BITTORRENT)
+  return legacyCheckpointImportAvailable(e) && e->getSqlite3SessionStore();
 #else
   return false;
 #endif
@@ -375,6 +394,115 @@ struct Statement {
     return p ? std::string(static_cast<const char*>(p), len) : std::string();
   }
 };
+
+struct MetadataSnapshot {
+  std::string path, digest, bytes;
+  Identity expected;
+  Handle handle;
+};
+void checkSha256(const std::string& digest)
+{
+  if (digest.size() != 64 ||
+      digest.find_first_not_of("0123456789abcdef") != std::string::npos) {
+    throw DL_ABORT_EX("Legacy torrent metadata invalid SHA256");
+  }
+}
+void verifyMetadata(const MetadataSnapshot& metadata)
+{
+  auto current = openSafe(metadata.path);
+  if (!(statHandle(current.fd) == metadata.expected) ||
+      !(statHandle(metadata.handle.fd) == metadata.expected)) {
+    throw DL_ABORT_EX("Legacy torrent metadata identity changed");
+  }
+}
+MetadataSnapshot readMetadata(const std::string& path,
+                              const std::string& digest)
+{
+  checkSha256(digest);
+  MetadataSnapshot metadata;
+  metadata.path = path;
+  metadata.digest = digest;
+  metadata.handle = openSafe(path);
+  metadata.expected = statHandle(metadata.handle.fd);
+  auto length = std::stoll(metadata.expected.size);
+  if (length <= 0 || length > int64_t(LEGACY_CHECKPOINT_MAX_BYTES)) {
+    throw DL_ABORT_EX("Legacy torrent metadata size invalid");
+  }
+  metadata.bytes.resize(length);
+  size_t offset = 0;
+  while (offset < metadata.bytes.size()) {
+    auto read = pread(metadata.handle.fd, &metadata.bytes[offset],
+                      metadata.bytes.size() - offset, offset);
+    if (read < 0 && errno == EINTR) {
+      continue;
+    }
+    if (read <= 0) {
+      throw DL_ABORT_EX("Legacy torrent metadata read failed");
+    }
+    offset += read;
+  }
+  auto md = MessageDigest::create("sha-256");
+  md->update(metadata.bytes.data(), metadata.bytes.size());
+  if (util::toHex(md->digest()) != digest) {
+    throw DL_ABORT_EX("Legacy torrent metadata digest mismatch");
+  }
+  verifyMetadata(metadata);
+  return metadata;
+}
+void invalidateMetadata(Sqlite3PersistenceStore& store,
+                        const std::string& token)
+{
+  store.withTransaction([&]() {
+    Statement update(store.raw(), "UPDATE legacy_torrent_metadata SET "
+                                  "invalidated=1 WHERE token=?");
+    update.text(1, token);
+    update.done();
+    Statement receipt(store.raw(), "UPDATE legacy_checkpoint_import SET "
+                                   "consumed=2 WHERE token=? AND consumed=0");
+    receipt.text(1, token);
+    receipt.done();
+  });
+}
+MetadataSnapshot readStoredMetadata(Sqlite3PersistenceStore& store,
+                                    Statement& reference)
+{
+  const auto token = reference.column(0);
+  try {
+    if (sqlite3_column_int(reference.stmt, 8)) {
+      throw DL_ABORT_EX("Legacy torrent metadata was invalidated");
+    }
+    auto metadata = readMetadata(reference.column(1), reference.column(2));
+    Identity expected{reference.column(3), reference.column(4),
+                      reference.column(5), reference.column(6),
+                      reference.column(7)};
+    if (!(metadata.expected == expected)) {
+      throw DL_ABORT_EX("Legacy torrent metadata replaced before restoration");
+    }
+    return metadata;
+  }
+  catch (RecoverableException&) {
+    invalidateMetadata(store, token);
+    throw;
+  }
+}
+const char* const METADATA_REFERENCE_SQL =
+    "SELECT token,metadata_path,metadata_digest,device,inode,size,mtime_ns,"
+    "ctime_ns,invalidated FROM legacy_torrent_metadata WHERE gid=?";
+bool metadataIntact(Sqlite3PersistenceStore& store, const std::string& gid)
+{
+  Statement reference(store.raw(), METADATA_REFERENCE_SQL);
+  reference.text(1, gid);
+  if (!reference.row()) {
+    return true;
+  }
+  try {
+    readStoredMetadata(store, reference);
+    return true;
+  }
+  catch (RecoverableException&) {
+    return false;
+  }
+}
 bool matchesCheckpoint(Statement& p, const std::string& gid,
                        const std::string& progressDigest,
                        const std::string& controlDigest)
@@ -480,7 +608,8 @@ std::unique_ptr<Dict> receipt(Sqlite3PersistenceStore& store,
   p.text(1, target);
   bool intact = sqlite3_column_int(s.stmt, 5) == 0 &&
                 matchesCheckpoint(p, s.column(1), s.column(4), s.column(3)) &&
-                receiptFilesIntact(store, token);
+                receiptFilesIntact(store, token) &&
+                metadataIntact(store, s.column(1));
   if (!intact && sqlite3_column_int(s.stmt, 5) == 0) {
     // Terminal invalidation is durable: restoring the old row or payload must
     // never turn a consumed token back into a created token. Keep the original
@@ -584,6 +713,98 @@ void checkConflicts(DownloadEngine* e, const std::string& gid,
 } // namespace
 
 #ifdef HAVE_SQLITE3
+void validateLegacyTorrentMetadata(Sqlite3PersistenceStore& store,
+                                   const std::string& gid)
+{
+#  if defined(LEGACY_SAFE_POSIX) && defined(ENABLE_BITTORRENT)
+  Statement reference(store.raw(), METADATA_REFERENCE_SQL);
+  reference.text(1, gid);
+  if (reference.row()) {
+    readStoredMetadata(store, reference);
+  }
+#  else
+  sqlite3_stmt* reference = nullptr;
+  if (sqlite3_prepare_v2(store.raw(),
+                         "SELECT 1 FROM legacy_torrent_metadata WHERE gid=?",
+                         -1, &reference, nullptr) != SQLITE_OK) {
+    throw DL_ABORT_EX("Legacy torrent metadata query failed");
+  }
+  sqlite3_bind_text(reference, 1, gid.data(), gid.size(), SQLITE_TRANSIENT);
+  auto rc = sqlite3_step(reference);
+  sqlite3_finalize(reference);
+  if (rc != SQLITE_ROW && rc != SQLITE_DONE) {
+    throw DL_ABORT_EX("Legacy torrent metadata query failed");
+  }
+  if (rc == SQLITE_ROW) {
+    throw DL_ABORT_EX("Legacy torrent metadata unavailable on this host");
+  }
+#  endif
+}
+
+bool restoreLegacyTorrentTask(Sqlite3PersistenceStore& store,
+                              const std::string& gid,
+                              const std::string& serialized,
+                              const std::shared_ptr<Option>& option,
+                              std::vector<std::shared_ptr<RequestGroup>>& out)
+{
+#  if defined(LEGACY_SAFE_POSIX) && defined(ENABLE_BITTORRENT)
+  Statement reference(store.raw(), METADATA_REFERENCE_SQL);
+  reference.text(1, gid);
+  if (!reference.row()) {
+    return false;
+  }
+  try {
+    auto metadata = readStoredMetadata(store, reference);
+    UriListParser parser(make_unique<MemBufferReader>(serialized));
+    std::vector<std::string> uris;
+    Option parsed;
+    parser.parseNext(uris, parsed);
+    if (uris.size() != 1 || uris[0] != metadata.path || parser.hasNext() ||
+        parsed.get(PREF_GID) != gid) {
+      throw DL_ABORT_EX("Legacy torrent durable task binding changed");
+    }
+    auto requestOption = std::make_shared<Option>(*option);
+    const auto& optionParser = OptionParser::getInstance();
+    for (size_t i = 1; i < option::countOption(); ++i) {
+      auto pref = option::i2p(i);
+      auto handler = optionParser->find(pref);
+      if (handler && handler->getInitialOption() && parsed.defined(pref)) {
+        requestOption->put(pref, parsed.get(pref));
+      }
+    }
+    requestOption->put(PREF_TORRENT_FILE, metadata.path);
+    requestOption->put(PREF_PAUSE, A2_V_TRUE);
+    requestOption->put(PREF_RPC_SAVE_UPLOAD_METADATA, A2_V_FALSE);
+    requestOption->put(PREF_CHECK_INTEGRITY, A2_V_TRUE);
+    requestOption->put(PREF_BT_SEED_UNVERIFIED, A2_V_FALSE);
+    std::vector<std::shared_ptr<RequestGroup>> groups;
+    createRequestGroupForBitTorrent(groups, requestOption, {}, metadata.path,
+                                    metadata.bytes);
+    Statement receipt(store.raw(),
+                      "SELECT target_path FROM legacy_checkpoint_import "
+                      "WHERE token=? AND gid=?");
+    receipt.text(1, reference.column(0));
+    receipt.text(2, gid);
+    if (groups.size() != 1 || !receipt.row() ||
+        groups[0]->getDownloadContext()->getBasePath() != receipt.column(0)) {
+      throw DL_ABORT_EX("Legacy torrent restored target mismatch");
+    }
+    consumeLegacyCheckpoint(store, receipt.column(0),
+                            *groups[0]->getDownloadContext(), false);
+    verifyMetadata(metadata);
+    out.push_back(groups[0]);
+  }
+  catch (RecoverableException& error) {
+    invalidateMetadata(store, reference.column(0));
+    A2_LOG_ERROR_EX("Legacy torrent metadata restoration refused", error);
+  }
+  return true; // Never fall back to the ordinary filename loader.
+#  else
+  validateLegacyTorrentMetadata(store, gid);
+  return false;
+#  endif
+}
+
 bool legacyCheckpointPending(Sqlite3PersistenceStore& store,
                              const std::string& path)
 {
@@ -616,7 +837,8 @@ bool legacyCheckpointPending(Sqlite3PersistenceStore& store,
 #  endif
 }
 void consumeLegacyCheckpoint(Sqlite3PersistenceStore& store,
-                             const std::string& path, DownloadContext& context)
+                             const std::string& path, DownloadContext& context,
+                             bool consume)
 {
 #  ifdef LEGACY_SAFE_POSIX
   Statement s(
@@ -685,11 +907,13 @@ void consumeLegacyCheckpoint(Sqlite3PersistenceStore& store,
     }
     if (matched != context.getFileEntries().size())
       throw DL_ABORT_EX("Legacy checkpoint native task file map mismatch");
-    Statement update(
-        store.raw(),
-        "UPDATE legacy_checkpoint_import SET consumed=1 WHERE token=?");
-    update.text(1, token);
-    update.done();
+    if (consume) {
+      Statement update(
+          store.raw(),
+          "UPDATE legacy_checkpoint_import SET consumed=1 WHERE token=?");
+      update.text(1, token);
+      update.done();
+    }
   });
 #  else
   if (legacyCheckpointPending(store, path))
@@ -698,6 +922,116 @@ void consumeLegacyCheckpoint(Sqlite3PersistenceStore& store,
 }
 #endif
 namespace rpc {
+#ifdef ENABLE_BITTORRENT
+std::unique_ptr<ValueBase>
+AddLegacyTorrentV1RpcMethod::process(const RpcRequest& req, DownloadEngine* e)
+{
+  if (!legacyTorrentMetadataAvailable(e)) {
+    throw DL_ABORT_EX("LegacyTorrentMetadataV1 unavailable");
+  }
+#  ifdef LEGACY_SAFE_POSIX
+  auto d = checkRequiredParam<Dict>(req, 0);
+  if (req.params->size() != 1 || d->size() != 6) {
+    throw DL_ABORT_EX("Legacy torrent invalid activation request");
+  }
+  auto token = stringField(d, "token"), target = stringField(d, "targetPath");
+  checkToken(token);
+  checkPath(target);
+  auto options = downcast<Dict>(d->get("options"));
+  auto requestOption = std::make_shared<Option>(*e->getOption());
+  if (!options) {
+    throw DL_ABORT_EX("Legacy torrent missing options");
+  }
+  gatherRequestOption(requestOption.get(), options);
+  auto gid = requestOption->get(PREF_GID);
+  if (gid.size() != 16 || gid == "0000000000000000" ||
+      gid.find_first_not_of("0123456789abcdef") != std::string::npos ||
+      !requestOption->getAsBool(PREF_PAUSE) ||
+      !requestOption->getAsBool(PREF_CHECK_INTEGRITY) ||
+      requestOption->getAsBool(PREF_BT_SEED_UNVERIFIED)) {
+    throw DL_ABORT_EX(
+        "Legacy torrent requires reserved GID and paused verification");
+  }
+  auto store = e->getSqlite3Store();
+  auto original = receipt(*store, token, target);
+  if (stringField(original.get(), "status") != "created" ||
+      stringField(original.get(), "gid") != gid) {
+    throw DL_ABORT_EX("Legacy torrent requires an intact created receipt");
+  }
+  Statement existing(
+      store->raw(),
+      "SELECT 1 FROM legacy_torrent_metadata WHERE token=? OR gid=?");
+  existing.text(1, token);
+  existing.text(2, gid);
+  if (existing.row()) {
+    throw DL_ABORT_EX("Legacy torrent metadata already bound");
+  }
+  auto metadata = readMetadata(stringField(d, "metadataFile"),
+                               stringField(d, "metadataDigest"));
+  const auto& encoded = stringField(d, "metadata");
+  if (encoded.size() > 4 * ((LEGACY_CHECKPOINT_MAX_BYTES + 2) / 3) ||
+      encoded.size() % 4) {
+    throw DL_ABORT_EX("Legacy torrent metadata base64 size invalid");
+  }
+  auto bytes = base64::decode(encoded.begin(), encoded.end());
+  if (base64::encode(bytes.begin(), bytes.end()) != encoded ||
+      bytes != metadata.bytes) {
+    throw DL_ABORT_EX("Legacy torrent metadata bytes mismatch");
+  }
+  Statement alias(store->raw(), "SELECT 1 FROM legacy_checkpoint_file "
+                                "WHERE device=? AND inode=?");
+  alias.text(1, metadata.expected.device);
+  alias.text(2, metadata.expected.inode);
+  if (alias.row()) {
+    throw DL_ABORT_EX("Legacy torrent metadata aliases payload");
+  }
+  requestOption->put(PREF_TORRENT_FILE, metadata.path);
+  requestOption->put(PREF_RPC_SAVE_UPLOAD_METADATA, A2_V_FALSE);
+  std::vector<std::shared_ptr<RequestGroup>> groups;
+  createRequestGroupForBitTorrent(groups, requestOption, {}, metadata.path,
+                                  metadata.bytes);
+  if (groups.size() != 1 ||
+      groups[0]->getDownloadContext()->getBasePath() != target) {
+    throw DL_ABORT_EX("Legacy torrent native target mismatch");
+  }
+  consumeLegacyCheckpoint(*store, target, *groups[0]->getDownloadContext(),
+                          false);
+  store->withTransaction([&]() {
+    verifyMetadata(metadata);
+    Statement taskConflict(store->raw(), "SELECT 1 FROM task WHERE gid=?");
+    taskConflict.text(1, gid);
+    if (taskConflict.row()) {
+      throw DL_ABORT_EX("Legacy torrent durable task GID conflict");
+    }
+    Statement insert(store->raw(), "INSERT INTO legacy_torrent_metadata "
+                                   "(token,gid,metadata_path,metadata_digest,"
+                                   "device,inode,size,mtime_ns,ctime_ns) "
+                                   "VALUES(?,?,?,?,?,?,?,?,?)");
+    insert.text(1, token);
+    insert.text(2, gid);
+    insert.text(3, metadata.path);
+    insert.text(4, metadata.digest);
+    insert.text(5, metadata.expected.device);
+    insert.text(6, metadata.expected.inode);
+    insert.text(7, metadata.expected.size);
+    insert.text(8, metadata.expected.mtime);
+    insert.text(9, metadata.expected.ctime);
+    insert.done();
+    e->getSqlite3SessionStore()->upsertTask(groups[0], false, true);
+    Statement task(store->raw(), "SELECT state FROM task WHERE gid=?");
+    task.text(1, gid);
+    if (!task.row() || task.column(0) != "paused") {
+      throw DL_ABORT_EX("Legacy torrent durable paused task missing");
+    }
+    verifyMetadata(metadata);
+  });
+  e->getRequestGroupMan()->addReservedGroup(groups[0]);
+  return String::g(gid);
+#  else
+  throw DL_ABORT_EX("LegacyTorrentMetadataV1 unavailable");
+#  endif
+}
+#endif
 std::unique_ptr<ValueBase>
 InspectLegacyCheckpointV1RpcMethod::process(const RpcRequest& req,
                                             DownloadEngine* e)

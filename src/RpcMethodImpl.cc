@@ -1396,6 +1396,9 @@ std::unique_ptr<ValueBase> GetVersionRpcMethod::process(const RpcRequest& req,
   if (legacyCheckpointImportAvailable(e)) {
     featureList->append("LegacyCheckpointImportV1");
   }
+  if (legacyTorrentMetadataAvailable(e)) {
+    featureList->append("LegacyTorrentMetadataV1");
+  }
   result->put(KEY_ENABLED_FEATURES, std::move(featureList));
   return std::move(result);
 }
