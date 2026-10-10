@@ -41,13 +41,13 @@ jobs:
         - { arch: x86_64, asset_arch: x64,   runner: macos-26-intel }
     runs-on: ${{ matrix.runner }}
     steps:
-    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Inject version into configure.ac
       run: |
         sed -i '' -E "s/AC_INIT\(\[aria2\],\[[^]]+\]/AC_INIT([aria2],[${{ needs.version.outputs.version }}]/" configure.ac
         grep -qF "AC_INIT([aria2],[${{ needs.version.outputs.version }}]" configure.ac || { echo "version injection did not match AC_INIT"; exit 1; }
     - name: Cache static deps
-      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         path: build-release/arch
         key: osx-deps-${{ matrix.arch }}-${{ hashFiles('makerelease-osx.mk', 'scripts/ci/deps.env', 'patches/libssh2-*.patch') }}
@@ -63,7 +63,7 @@ jobs:
         V=${{ needs.version.outputs.version }}
         tar -C build-release/aria2.${{ matrix.arch }}/src -czf \
           "aria2c-$V-darwin-${{ matrix.asset_arch }}.tar.gz" aria2c
-    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: darwin-${{ matrix.asset_arch }}
         path: aria2c-*-darwin-*.tar.gz
@@ -78,8 +78,8 @@ jobs:
         - { asset_arch: x64,   runner: macos-26-intel }
     runs-on: ${{ matrix.runner }}
     steps:
-    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
         name: darwin-${{ matrix.asset_arch }}
         path: dist
@@ -136,7 +136,7 @@ jobs:
         - { host: x86_64-w64-mingw32, asset_arch: x64 }
         - { host: i686-w64-mingw32,   asset_arch: ia32 }
     steps:
-    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Inject version into configure.ac
       run: |
         sed -i -E "s/AC_INIT\(\[aria2\],\[[^]]+\]/AC_INIT([aria2],[${{ needs.version.outputs.version }}]/" configure.ac
@@ -152,7 +152,7 @@ jobs:
       run: |
         V=${{ needs.version.outputs.version }}
         zip -j "aria2c-$V-win32-${{ matrix.asset_arch }}.zip" aria2c.exe
-    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: win32-${{ matrix.asset_arch }}
         path: aria2c-*-win32-*.zip
@@ -168,11 +168,11 @@ jobs:
         - { asset_arch: ia32, runner: windows-2025 }
     runs-on: ${{ matrix.runner }}
     steps:
-    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: 24
-    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
         name: win32-${{ matrix.asset_arch }}
         path: dist
@@ -244,7 +244,7 @@ jobs:
       run: node --test test/e2e/websocket-rpc-contract.e2e.test.mjs
     - name: Upload WebSocket diagnostics
       if: failure()
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ws-contract-${{ matrix.asset_arch }}-${{ matrix.runner }}
         path: test-results/ws-contract
@@ -263,12 +263,12 @@ jobs:
       with:
         version: 12.10.1
         run_install: false
-    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: 24
         cache: pnpm
         cache-dependency-path: Motrix/pnpm-lock.yaml
-    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
         name: win32-x64
         path: dist
@@ -306,7 +306,7 @@ jobs:
         - { triple: aarch64-linux-musl, asset_arch: arm64 }
         - { triple: armv7l-linux-musleabihf, asset_arch: armv7l }
     steps:
-    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Inject version into configure.ac
       run: |
         sed -i -E "s/AC_INIT\(\[aria2\],\[[^]]+\]/AC_INIT([aria2],[${{ needs.version.outputs.version }}]/" configure.ac
@@ -323,7 +323,7 @@ jobs:
       run: |
         V=${{ needs.version.outputs.version }}
         tar -czf "aria2c-$V-linux-${{ matrix.asset_arch }}.tar.gz" aria2c
-    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: linux-${{ matrix.asset_arch }}
         path: aria2c-*-linux-*.tar.gz
@@ -332,7 +332,7 @@ jobs:
     needs: version
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Inject version into configure.ac
       run: |
         sed -i -E "s/AC_INIT\(\[aria2\],\[[^]]+\]/AC_INIT([aria2],[${{ needs.version.outputs.version }}]/" configure.ac
@@ -347,7 +347,7 @@ jobs:
       run: |
         V=${{ needs.version.outputs.version }}
         tar -czf "aria2c-$V-android-arm.tar.gz" aria2c
-    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: android-arm
         path: aria2c-*-android-arm.tar.gz
@@ -366,11 +366,11 @@ jobs:
         - { asset: linux-arm64, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.runner }}
     steps:
-    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: 24
-    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
         name: ${{ matrix.asset }}
         path: dist
@@ -411,11 +411,11 @@ jobs:
         - { asset: win32-ia32, runner: windows-2025 }
     runs-on: ${{ matrix.runner }}
     steps:
-    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: 24
-    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
         name: ${{ matrix.asset }}
         path: dist
@@ -482,12 +482,12 @@ jobs:
       with:
         version: 12.10.1
         run_install: false
-    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: 24
         cache: pnpm
         cache-dependency-path: Motrix/pnpm-lock.yaml
-    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
         name: ${{ matrix.asset }}
         path: dist
@@ -519,7 +519,7 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with: { path: dist, merge-multiple: true }
     - name: Generate SHA256SUMS
       run: cd dist && sha256sum aria2c-* > SHA256SUMS
