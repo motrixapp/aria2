@@ -2,7 +2,7 @@
 /*
  * aria2 - The high speed download utility
  *
- * Copyright (C) 2006 Tatsuhiro Tsujikawa
+ * Copyright (C) 2026 Tatsuhiro Tsujikawa
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,48 +32,40 @@
  * files in the program, then also delete it here.
  */
 /* copyright --> */
-#ifndef D_BT_PROGRESS_INFO_FILE_H
-#define D_BT_PROGRESS_INFO_FILE_H
-
+#ifndef D_LEGACY_CHECKPOINT_CODEC_H
+#define D_LEGACY_CHECKPOINT_CODEC_H
 #include "common.h"
-
-#include <memory>
+#include <cstdint>
 #include <string>
-
+#include <vector>
 namespace aria2 {
-
-#ifdef ENABLE_BITTORRENT
-class BtRuntime;
-class PeerStorage;
-#endif
-
-class BtProgressInfoFile {
-public:
-  virtual ~BtProgressInfoFile() = default;
-
-  virtual std::string getFilename() = 0;
-
-  virtual bool exists() = 0;
-
-  virtual void save() = 0;
-
-  virtual void load() = 0;
-
-  // SQLite imports must validate ownership before any payload open, including
-  // code paths that would otherwise bypass load and truncate old bytes.
-  virtual void validateFileOpen(bool destructive = false) {}
-
-  virtual void removeFile() = 0;
-
-  // re-set filename
-  virtual void updateFilename() = 0;
-
-#ifdef ENABLE_BITTORRENT
-  virtual void setBtRuntime(const std::shared_ptr<BtRuntime>& btRuntime) {}
-  virtual void setPeerStorage(const std::shared_ptr<PeerStorage>& peerStorage) {}
-#endif
+struct LegacyCheckpointPiece {
+  uint32_t index;
+  uint32_t length;
+  std::string bitfield;
 };
-
+struct LegacyCheckpointRange {
+  int64_t offset;
+  int64_t length;
+};
+struct LegacyCheckpoint {
+  bool torrent = false;
+  std::string infoHash;
+  uint32_t pieceLength = 0;
+  int64_t totalLength = 0;
+  int64_t uploadLength = 0;
+  std::string bitfield;
+  std::vector<LegacyCheckpointPiece> pieces;
+  std::string inFlightBlob;
+  std::string controlDigest;
+  int64_t completedLength = 0;
+  std::vector<LegacyCheckpointRange> ranges;
+};
+constexpr size_t LEGACY_CHECKPOINT_MAX_BYTES = 64 * 1024 * 1024;
+// The serializer is shared with native .aria2 saving. The strict, bounded
+// decoder is reserved for untrusted migration snapshots, and refuses v0.
+std::string encodeLegacyCheckpointV1(const LegacyCheckpoint& checkpoint);
+LegacyCheckpoint decodeLegacyCheckpointV1(const std::string& bytes);
+std::string legacyCheckpointProgressDigest(const LegacyCheckpoint& checkpoint);
 } // namespace aria2
-
-#endif // D_BT_PROGRESS_INFO_FILE_H
+#endif

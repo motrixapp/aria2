@@ -33,6 +33,7 @@
  */
 /* copyright --> */
 #include "DefaultBtProgressInfoFile.h"
+#include "LegacyCheckpointCodec.h"
 
 #include <cstring>
 #include <cstdio>
@@ -115,76 +116,38 @@ void DefaultBtProgressInfoFile::save(IOFile& fp)
 #else  // !ENABLE_BITTORRENT
   bool torrentDownload = false;
 #endif // !ENABLE_BITTORRENT
-  // file version: 16 bits
-  // values: '1'
-  char version[] = {0x00u, 0x01u};
-  WRITE_CHECK(fp, version, sizeof(version));
-  // extension: 32 bits
-  // If this is BitTorrent download, then 0x00000001
-  // Otherwise, 0x00000000
-  char extension[4];
-  memset(extension, 0, sizeof(extension));
-  if (torrentDownload) {
-    extension[3] = 1;
-  }
-  WRITE_CHECK(fp, extension, sizeof(extension));
-  if (torrentDownload) {
-#ifdef ENABLE_BITTORRENT
-    // infoHashLength:
-    // length: 32 bits
-    const unsigned char* infoHash = bittorrent::getInfoHash(dctx_);
-    uint32_t infoHashLengthNL = htonl(INFO_HASH_LENGTH);
-    WRITE_CHECK(fp, &infoHashLengthNL, sizeof(infoHashLengthNL));
-    // infoHash:
-    WRITE_CHECK(fp, infoHash, INFO_HASH_LENGTH);
-#endif // ENABLE_BITTORRENT
-  }
-  else {
-    // infoHashLength:
-    // length: 32 bits
-    uint32_t infoHashLength = 0;
-    WRITE_CHECK(fp, &infoHashLength, sizeof(infoHashLength));
-  }
-  // pieceLength: 32 bits
-  uint32_t pieceLengthNL = htonl(dctx_->getPieceLength());
-  WRITE_CHECK(fp, &pieceLengthNL, sizeof(pieceLengthNL));
-  // totalLength: 64 bits
-  uint64_t totalLengthNL = hton64(dctx_->getTotalLength());
-  WRITE_CHECK(fp, &totalLengthNL, sizeof(totalLengthNL));
-  // uploadLength: 64 bits
-  uint64_t uploadLengthNL = 0;
+  LegacyCheckpoint checkpoint;
+  checkpoint.torrent = torrentDownload;
 #ifdef ENABLE_BITTORRENT
   if (torrentDownload) {
-    uploadLengthNL = hton64(btRuntime_->getUploadLengthAtStartup() +
-                            dctx_->getNetStat().getSessionUploadLength());
+    checkpoint.infoHash.assign(
+        reinterpret_cast<const char*>(bittorrent::getInfoHash(dctx_)),
+        INFO_HASH_LENGTH);
+    checkpoint.uploadLength = btRuntime_->getUploadLengthAtStartup() +
+                              dctx_->getNetStat().getSessionUploadLength();
   }
-#endif // ENABLE_BITTORRENT
-  WRITE_CHECK(fp, &uploadLengthNL, sizeof(uploadLengthNL));
-  // bitfieldLength: 32 bits
-  uint32_t bitfieldLengthNL = htonl(pieceStorage_->getBitfieldLength());
-  WRITE_CHECK(fp, &bitfieldLengthNL, sizeof(bitfieldLengthNL));
-  // bitfield
-  WRITE_CHECK(fp, pieceStorage_->getBitfield(),
-              pieceStorage_->getBitfieldLength());
-  // the number of in-flight piece: 32 bits
-  // TODO implement this
-  uint32_t numInFlightPieceNL = htonl(pieceStorage_->countInFlightPiece());
-  WRITE_CHECK(fp, &numInFlightPieceNL, sizeof(numInFlightPieceNL));
+#endif
+  checkpoint.pieceLength = dctx_->getPieceLength();
+  checkpoint.totalLength = dctx_->getTotalLength();
+  if (pieceStorage_->getBitfieldLength() > 0) {
+    checkpoint.bitfield.assign(
+        reinterpret_cast<const char*>(pieceStorage_->getBitfield()),
+        pieceStorage_->getBitfieldLength());
+  }
   std::vector<std::shared_ptr<Piece>> inFlightPieces;
-  inFlightPieces.reserve(pieceStorage_->countInFlightPiece());
   pieceStorage_->getInFlightPieces(inFlightPieces);
-  for (std::vector<std::shared_ptr<Piece>>::const_iterator
-           itr = inFlightPieces.begin(),
-           eoi = inFlightPieces.end();
-       itr != eoi; ++itr) {
-    uint32_t indexNL = htonl((*itr)->getIndex());
-    WRITE_CHECK(fp, &indexNL, sizeof(indexNL));
-    uint32_t lengthNL = htonl((*itr)->getLength());
-    WRITE_CHECK(fp, &lengthNL, sizeof(lengthNL));
-    uint32_t bitfieldLengthNL = htonl((*itr)->getBitfieldLength());
-    WRITE_CHECK(fp, &bitfieldLengthNL, sizeof(bitfieldLengthNL));
-    WRITE_CHECK(fp, (*itr)->getBitfield(), (*itr)->getBitfieldLength());
+  for (const auto& piece : inFlightPieces) {
+    std::string bitfield;
+    if (piece->getBitfieldLength() > 0) {
+      bitfield.assign(reinterpret_cast<const char*>(piece->getBitfield()),
+                      piece->getBitfieldLength());
+    }
+    checkpoint.pieces.push_back({static_cast<uint32_t>(piece->getIndex()),
+                                 static_cast<uint32_t>(piece->getLength()),
+                                 std::move(bitfield)});
   }
+  auto bytes = encodeLegacyCheckpointV1(checkpoint);
+  WRITE_CHECK(fp, bytes.data(), bytes.size());
   if (fp.close() == EOF) {
     throw DL_ABORT_EX(fmt(EX_SEGMENT_FILE_WRITE, filename_.c_str()));
   }

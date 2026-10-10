@@ -347,6 +347,10 @@ bool HttpResponseCommand::executeInternal()
     // failed download could be larger than the size this time.
     // Also we can't resume in this case too.  So truncate the file
     // anyway.
+    auto checkpoint =
+        makeBtProgressInfoFile(getDownloadContext(), getPieceStorage(),
+                               getOption().get(), getDownloadEngine());
+    checkpoint->validateFileOpen(true);
     getPieceStorage()->getDiskAdaptor()->truncate(0);
     auto teFilter = getTransferEncodingStreamFilter(
         httpResponse.get(), getContentEncodingStreamFilter(httpResponse.get()));
@@ -456,6 +460,13 @@ bool HttpResponseCommand::handleOtherEncoding(
     getRequest()->setMethod(Request::METHOD_GET);
     return prepareForRetry(0);
   }
+
+  // Unknown-length/encoded responses bypass normal checkpoint loading and
+  // truncate the output. Imported bytes must remain intact in these paths.
+  auto checkpoint = makeBtProgressInfoFile(
+      getDownloadContext(), std::shared_ptr<PieceStorage>{}, getOption().get(),
+      getDownloadEngine());
+  checkpoint->validateFileOpen(true);
 
   // In this context, knowsTotalLength() is true only when the file is
   // really zero-length.

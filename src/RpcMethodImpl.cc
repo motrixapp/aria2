@@ -36,6 +36,7 @@
 
 #include "BtProgressInfoFileFactory.h"
 #include "RpcCookie.h"
+#include "LegacyCheckpointImport.h"
 
 #include <cassert>
 #include <algorithm>
@@ -1391,6 +1392,12 @@ std::unique_ptr<ValueBase> GetVersionRpcMethod::process(const RpcRequest& req,
     if (name) {
       featureList->append(name);
     }
+  }
+  if (legacyCheckpointImportAvailable(e)) {
+    featureList->append("LegacyCheckpointImportV1");
+  }
+  if (legacyTorrentMetadataAvailable(e)) {
+    featureList->append("LegacyTorrentMetadataV1");
   }
   result->put(KEY_ENABLED_FEATURES, std::move(featureList));
   return std::move(result);

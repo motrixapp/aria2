@@ -247,6 +247,10 @@ void SftpNegotiationCommand::onFileSizeDetermined(int64_t totalLength)
       return;
     }
 
+    auto checkpoint = makeBtProgressInfoFile(
+        getDownloadContext(), std::shared_ptr<PieceStorage>{},
+        getOption().get(), getDownloadEngine());
+    checkpoint->validateFileOpen(true);
     getRequestGroup()->adjustFilename(std::make_shared<NullProgressInfoFile>());
     getRequestGroup()->initPieceStorage();
     getPieceStorage()->getDiskAdaptor()->initAndOpenFile();

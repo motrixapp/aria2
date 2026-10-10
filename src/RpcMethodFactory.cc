@@ -56,6 +56,7 @@ std::vector<std::string> rpcMethodNames = {
     "aria2.setTaskCookies",
 #ifdef ENABLE_BITTORRENT
     "aria2.addTorrent",
+    "aria2.addLegacyTorrentV1",
     "aria2.getPeers",
 #endif // ENABLE_BITTORRENT
 #ifdef ENABLE_METALINK
@@ -91,6 +92,9 @@ std::vector<std::string> rpcMethodNames = {
     "aria2.getGlobalStat",
     "aria2.saveSession",
     "aria2.getCheckpointStatus",
+    "aria2.inspectLegacyCheckpointV1",
+    "aria2.importLegacyCheckpointV1",
+    "aria2.reconcileLegacyCheckpointV1",
 #ifdef HAVE_SQLITE3
     "aria2.getDownloadResultCount",
     "aria2.searchDownloadResult",
@@ -137,6 +141,9 @@ std::unique_ptr<RpcMethod> createMethod(const std::string& methodName)
 #ifdef ENABLE_BITTORRENT
   if (methodName == AddTorrentRpcMethod::getMethodName()) {
     return make_unique<AddTorrentRpcMethod>();
+  }
+  if (methodName == AddLegacyTorrentV1RpcMethod::getMethodName()) {
+    return make_unique<AddLegacyTorrentV1RpcMethod>();
   }
 
   if (methodName == GetPeersRpcMethod::getMethodName()) {
@@ -240,6 +247,18 @@ std::unique_ptr<RpcMethod> createMethod(const std::string& methodName)
 
   if (methodName == RemoveDownloadResultRpcMethod::getMethodName()) {
     return make_unique<RemoveDownloadResultRpcMethod>();
+  }
+
+  if (methodName == InspectLegacyCheckpointV1RpcMethod::getMethodName()) {
+    return make_unique<InspectLegacyCheckpointV1RpcMethod>();
+  }
+
+  if (methodName == ImportLegacyCheckpointV1RpcMethod::getMethodName()) {
+    return make_unique<ImportLegacyCheckpointV1RpcMethod>();
+  }
+
+  if (methodName == ReconcileLegacyCheckpointV1RpcMethod::getMethodName()) {
+    return make_unique<ReconcileLegacyCheckpointV1RpcMethod>();
   }
 
   if (methodName == GetVersionRpcMethod::getMethodName()) {

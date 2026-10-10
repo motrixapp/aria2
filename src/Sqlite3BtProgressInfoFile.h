@@ -67,6 +67,7 @@ public:
   bool exists() CXX11_OVERRIDE;
   void save() CXX11_OVERRIDE;
   void load() CXX11_OVERRIDE;
+  void validateFileOpen(bool destructive = false) CXX11_OVERRIDE;
   void removeFile() CXX11_OVERRIDE;
   void updateFilename() CXX11_OVERRIDE;
 

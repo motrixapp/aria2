@@ -61,20 +61,23 @@ public:
   Sqlite3SessionStore(const Sqlite3SessionStore&) = delete;
   Sqlite3SessionStore& operator=(const Sqlite3SessionStore&) = delete;
 
-  // Wholesale rewrite: DELETE FROM task; then INSERT one row per active and
-  // reserved RG, in queue-position order, all in a single transaction.
+  // Upsert active/reserved groups and prune orphan rows. Invalidated legacy
+  // metadata bindings retain their task rows as durable recovery evidence.
   void saveAllTasks(RequestGroupMan* rgman);
 
-  // Read task rows (ordered by queue_position ASC), concatenate their
-  // serialized blobs, and parse them into RequestGroup objects appended to out.
+  // Read task rows in queue-position order and parse each serialized blob.
+  // Durable legacy torrents verify their metadata grant before RAM-only
+  // restoration; invalid grants never fall back to ordinary URI loading.
   void loadActiveTasksInto(std::vector<std::shared_ptr<RequestGroup>>& out,
                            const std::shared_ptr<Option>& op);
 
   // Insert a single task row, or UPDATE if its gid already exists.
   // New rows get queue_position = COALESCE(MAX+1, 0).
   // On conflict: preserves created_at and queue_position; refreshes updated_at.
+  // useExistingTransaction requires an open transaction owned by the caller.
   void upsertTask(const std::shared_ptr<RequestGroup>& rg,
-                  bool persistTaskCookieSnapshot = true);
+                  bool persistTaskCookieSnapshot = true,
+                  bool useExistingTransaction = false);
 
   // Atomically replace the durable task-scoped cookie jar. The context row is
   // retained for an empty jar so isolation survives an engine restart.

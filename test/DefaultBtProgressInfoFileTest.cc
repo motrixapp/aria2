@@ -32,6 +32,7 @@ class DefaultBtProgressInfoFileTest : public CppUnit::TestFixture {
 #  endif // !WORDS_BIGENDIAN
 #endif   // ENABLE_BITTORRENT
   CPPUNIT_TEST(testSave_nonBt);
+  CPPUNIT_TEST(testSave_nonBtEmpty);
   CPPUNIT_TEST(testLoad_nonBt);
 #ifndef WORDS_BIGENDIAN
   CPPUNIT_TEST(testLoad_nonBt_compat);
@@ -94,6 +95,7 @@ public:
 #  endif // !WORDS_BIGENDIAN
 #endif   // ENABLE_BITTORRENT
   void testSave_nonBt();
+  void testSave_nonBtEmpty();
   void testLoad_nonBt();
 #ifndef WORDS_BIGENDIAN
   void testLoad_nonBt_compat();
@@ -549,6 +551,24 @@ void DefaultBtProgressInfoFileTest::testSave_nonBt()
   in.read((char*)&pieceLength2, sizeof(pieceLength2));
   pieceLength2 = ntohl(pieceLength2);
   CPPUNIT_ASSERT_EQUAL((uint32_t)512, pieceLength2);
+}
+
+void DefaultBtProgressInfoFileTest::testSave_nonBtEmpty()
+{
+  initializeMembers(1_k, 0);
+  CPPUNIT_ASSERT_EQUAL(size_t(0), pieceStorage_->getBitfieldLength());
+  CPPUNIT_ASSERT(pieceStorage_->getBitfield() == nullptr);
+  auto dctx =
+      std::make_shared<DownloadContext>(1_k, 0, A2_TEST_OUT_DIR "/save-empty");
+  DefaultBtProgressInfoFile file(dctx, pieceStorage_, option_.get());
+  file.save();
+  std::ifstream input(file.getFilename(), std::ios::binary);
+  std::string bytes((std::istreambuf_iterator<char>(input)),
+                    std::istreambuf_iterator<char>());
+  CPPUNIT_ASSERT_EQUAL(size_t(38), bytes.size());
+  CPPUNIT_ASSERT_EQUAL(
+      std::string("0001"),
+      util::toHex(reinterpret_cast<const unsigned char*>(bytes.data()), 2));
 }
 
 void DefaultBtProgressInfoFileTest::testUpdateFilename()

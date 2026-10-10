@@ -33,6 +33,7 @@
  */
 /* copyright --> */
 #include "Sqlite3BtProgressInfoFile.h"
+#include "LegacyCheckpointImport.h"
 
 #ifdef HAVE_SQLITE3
 
@@ -258,6 +259,10 @@ bool Sqlite3BtProgressInfoFile::exists()
 
 void Sqlite3BtProgressInfoFile::save()
 {
+  if (legacyCheckpointPending(*store_, outPath_)) {
+    throw DL_ABORT_EX(
+        "Legacy checkpoint has not passed restoration identity checks");
+  }
   bool isTorrent = false;
 #ifdef ENABLE_BITTORRENT
   isTorrent = dctx_->hasAttribute(CTX_ATTR_BT);
@@ -374,8 +379,31 @@ void Sqlite3BtProgressInfoFile::save()
                   gidHex_.c_str()));
 }
 
+void Sqlite3BtProgressInfoFile::validateFileOpen(bool destructive)
+{
+  try {
+    validateLegacyTorrentMetadata(*store_, gidHex_);
+    if (!legacyCheckpointPending(*store_, outPath_)) {
+      return;
+    }
+    if (destructive) {
+      throw DL_ABORT_EX(
+          "Legacy checkpoint refuses destructive payload restart");
+    }
+    consumeLegacyCheckpoint(*store_, outPath_, *dctx_);
+  }
+  catch (RecoverableException& e) {
+    // Some callers validate before PieceStorage exists. Aborting only one
+    // request there would repeatedly search for another URI without a
+    // SegmentMan to detect that all requests failed. Reject the whole task.
+    throw DOWNLOAD_FAILURE_EXCEPTION2("Legacy checkpoint restoration refused",
+                                      e);
+  }
+}
+
 void Sqlite3BtProgressInfoFile::load()
 {
+  consumeLegacyCheckpoint(*store_, outPath_, *dctx_);
   A2_LOG_INFO(fmt("sqlite3-persistence: loading task_progress for gid=%s",
                   gidHex_.c_str()));
 
@@ -580,6 +608,9 @@ void Sqlite3BtProgressInfoFile::load()
 
 void Sqlite3BtProgressInfoFile::removeFile()
 {
+  if (legacyCheckpointPending(*store_, outPath_)) {
+    throw DL_ABORT_EX("Legacy checkpoint refuses destructive progress removal");
+  }
   sqlite3* db = store_->raw();
   StmtGuard stmt;
   if (sqlite3_prepare_v2(db, kDeleteSql, -1, &stmt.stmt, nullptr) !=
