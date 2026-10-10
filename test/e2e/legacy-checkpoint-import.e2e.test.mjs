@@ -2,7 +2,7 @@ import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createServer, request as forwardHttp } from 'node:http'
-import { chmod, copyFile, link, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, link, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -11,6 +11,8 @@ import { allocPorts, spawnAria2, stopInstance } from './helpers/aria2-process.mj
 import { Aria2Rpc } from './helpers/rpc-client.mjs'
 import { encode } from './helpers/bencode.mjs'
 const secret='legacy-fixture-secret', payload=Buffer.alloc(98305,0x63)
+const previousBin=process.env.ARIA2_SCHEMA4_BIN || process.env.ARIA2_SCHEMA3_BIN
+const previousSchema=process.env.ARIA2_SCHEMA4_BIN ? 4 : 3
 const inspect='aria2.inspectLegacyCheckpointV1', importMethod='aria2.importLegacyCheckpointV1', reconcile='aria2.reconcileLegacyCheckpointV1'
 let root, server, url, nativeControl, nativePartial, requests=[]
 const nativePayload=Buffer.alloc(4194304)
@@ -407,19 +409,55 @@ describe('legacy checkpoint engine import',()=>{
     db(e,d=>d.exec('DROP TRIGGER reject_task'))
     assert.equal(await e.rpc.call('aria2.addLegacyTorrentV1',[state.activation]),state.req.gid)
   })
-  it('requires the new runtime capability and makes the schema4 binary refuse schema5',{skip:!process.env.ARIA2_SCHEMA4_BIN},async t=>{
-    const old=await engine(t,`${root}/bt-old-capability`,{bin:process.env.ARIA2_SCHEMA4_BIN})
+  it('requires the new runtime capability and makes the previous binary refuse schema5',{skip:!previousBin},async t=>{
+    const old=await engine(t,`${root}/bt-old-capability`,{bin:previousBin})
     assert.ok(!(await old.rpc.call('aria2.getVersion')).enabledFeatures.includes('LegacyTorrentMetadataV1'))
     await assert.rejects(old.rpc.call('aria2.addLegacyTorrentV1',[{}]),/No such method|not found/)
     await old.stop()
-    const current=await engine(t,`${root}/bt-schema5`);await current.stop()
-    const proc=await spawnAria2({bin:process.env.ARIA2_SCHEMA4_BIN,args:['--no-conf=true','--no-netrc=true',
+    const current=await engine(t,`${root}/bt-schema5`),state=await durableBtRequest(current,'downgrade')
+    await current.rpc.call('aria2.addLegacyTorrentV1',[state.activation]);await current.stop()
+    const durableBefore=db(current,d=>d.prepare('SELECT * FROM task').all())
+    const receiptsBefore=db(current,d=>d.prepare('SELECT * FROM legacy_checkpoint_import').all())
+    const proc=await spawnAria2({bin:previousBin,args:['--no-conf=true','--no-netrc=true',
       '--enable-rpc=false','--enable-dht=false','--enable-sqlite3-persistence=true',`--sqlite3-db-path=${current.dir}/session.db`]})
     let output='';proc.stdout.on('data',b=>output+=b);proc.stderr.on('data',b=>output+=b)
     t.after(()=>stopInstance(proc))
     const code=await new Promise(r=>proc.once('exit',r));assert.notEqual(code,0)
-    assert.match(output,/schema version 5 is newer.*supports \(4\)/s)
-    t.diagnostic('schema4 engine refused newer metadata grants before restoring tasks')
+    assert.match(output,/schema version 5 is newer/s)
+    assert.ok(output.includes(`supports (${previousSchema})`),output)
+    assert.deepEqual(db(current,d=>d.prepare('SELECT * FROM task').all()),durableBefore)
+    assert.deepEqual(db(current,d=>d.prepare('SELECT * FROM legacy_checkpoint_import').all()),receiptsBefore)
+    t.diagnostic(`schema${previousSchema} engine refused newer metadata grants without deleting tasks or receipts`)
+  })
+  for(const version of [3,4]) it(`upgrades schema${version} with a complete WAL snapshot and preserves paused GIDs`,async t=>{
+    const dir=`${root}/upgrade-v${version}`;let e=await engine(t,dir)
+    const gid='abcdef0123456789'
+    await e.rpc.call('aria2.addUri',[[url],{gid,pause:'true',dir,out:'upgrade.bin'}])
+    await e.stop()
+    const writer=new DatabaseSync(`${dir}/session.db`)
+    t.after(()=>writer.close())
+    writer.exec(`PRAGMA wal_autocheckpoint=0; DROP TABLE legacy_torrent_metadata; ${version===3?'DROP TABLE legacy_checkpoint_file; DROP TABLE legacy_checkpoint_import;':''}
+      CREATE TABLE upgrade_sentinel(value TEXT); INSERT INTO upgrade_sentinel VALUES('committed WAL');
+      UPDATE meta SET value='${version}' WHERE key='schema_version'; PRAGMA user_version=${version};`)
+    const tasks=writer.prepare('SELECT * FROM task').all()
+    assert.ok((await stat(`${dir}/session.db-wal`)).size>0)
+    const beforeRequests=requests.length
+    e=await engine(t,dir)
+    assert.equal((await e.rpc.tellStatus(gid)).status,'paused')
+    assert.equal(requests.length,beforeRequests)
+    const backups=(await readdir(dir)).filter(name=>name.startsWith(`session.db.pre-schema5-v${version}.`)&&name.endsWith('.db'))
+    assert.equal(backups.length,1)
+    const backup=new DatabaseSync(`${dir}/${backups[0]}`,{readOnly:true})
+    try {
+      assert.equal(backup.prepare('PRAGMA user_version').get().user_version,version)
+      assert.equal(backup.prepare('PRAGMA quick_check').get().quick_check,'ok')
+      assert.equal(backup.prepare('PRAGMA journal_mode').get().journal_mode,'delete')
+      assert.equal(backup.prepare('SELECT value FROM upgrade_sentinel').get().value,'committed WAL')
+      assert.deepEqual(backup.prepare('SELECT * FROM task').all(),tasks)
+    } finally {backup.close()}
+    await e.stop();e=await engine(t,dir)
+    assert.equal((await e.rpc.tellStatus(gid)).status,'paused')
+    assert.equal((await readdir(dir)).filter(name=>name.startsWith('session.db.pre-schema5-')).length,1)
   })
   it('fills missing native v1 BT pieces from an isolated loopback aria2 seeder after explicit activation',{timeout:60000},async t=>{
     const e=await engine(t,`${root}/bt-peer-native/download`),seeder=await engine(t,`${root}/bt-peer-native/seed`)

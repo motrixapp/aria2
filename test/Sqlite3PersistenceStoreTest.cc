@@ -19,12 +19,14 @@ class Sqlite3PersistenceStoreTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testOpenAndPragmas);
   CPPUNIT_TEST(testCorruptDbRenamedAndRebuilt);
   CPPUNIT_TEST(testUnwritablePathThrows);
+  CPPUNIT_TEST(testMigrationBackupIncludesWal);
   CPPUNIT_TEST_SUITE_END();
 
 public:
   void testOpenAndPragmas();
   void testCorruptDbRenamedAndRebuilt();
   void testUnwritablePathThrows();
+  void testMigrationBackupIncludesWal();
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION(Sqlite3PersistenceStoreTest);
@@ -98,6 +100,61 @@ void Sqlite3PersistenceStoreTest::testUnwritablePathThrows()
 {
   Sqlite3PersistenceStore store("/this/path/does/not/exist/x.db");
   CPPUNIT_ASSERT_THROW(store.open(), RecoverableException);
+}
+
+void Sqlite3PersistenceStoreTest::testMigrationBackupIncludesWal()
+{
+  const std::string dbPath =
+      std::string(A2_TEST_OUT_DIR) + "/test_upgrade_backup.db";
+  std::remove(dbPath.c_str());
+  Sqlite3PersistenceStore writer(dbPath);
+  writer.open();
+  CPPUNIT_ASSERT_EQUAL(SQLITE_OK, sqlite3_exec(writer.raw(),
+      "PRAGMA wal_autocheckpoint=0;"
+      "DROP TABLE legacy_torrent_metadata;"
+      "DROP TABLE legacy_checkpoint_file;"
+      "DROP TABLE legacy_checkpoint_import;"
+      "CREATE TABLE backup_sentinel(value TEXT);"
+      "INSERT INTO backup_sentinel VALUES('committed in WAL');"
+      "UPDATE meta SET value='3' WHERE key='schema_version';"
+      "PRAGMA user_version=3;", nullptr, nullptr, nullptr));
+
+  // The writer remains open: a raw copy of the database body loses these rows.
+  Sqlite3PersistenceStore upgraded(dbPath);
+  upgraded.open();
+  CPPUNIT_ASSERT_EQUAL(std::string("5"), upgraded.queryPragma("user_version"));
+  DIR* directory = opendir(A2_TEST_OUT_DIR);
+  CPPUNIT_ASSERT(directory != nullptr);
+  bool verified = false;
+  struct dirent* entry;
+  while ((entry = readdir(directory)) != nullptr) {
+    const std::string name = entry->d_name;
+    if (name.find("test_upgrade_backup.db.pre-schema5-v3.") != 0 ||
+        name.size() < 3 || name.substr(name.size() - 3) != ".db") {
+      continue;
+    }
+    sqlite3* backup = nullptr;
+    const auto backupPath = std::string(A2_TEST_OUT_DIR) + "/" + name;
+    CPPUNIT_ASSERT_EQUAL(SQLITE_OK, sqlite3_open_v2(backupPath.c_str(), &backup,
+        SQLITE_OPEN_READONLY, nullptr));
+    sqlite3_stmt* statement = nullptr;
+    CPPUNIT_ASSERT_EQUAL(SQLITE_OK, sqlite3_prepare_v2(backup,
+        "SELECT value FROM backup_sentinel", -1, &statement, nullptr));
+    CPPUNIT_ASSERT_EQUAL(SQLITE_ROW, sqlite3_step(statement));
+    CPPUNIT_ASSERT_EQUAL(std::string("committed in WAL"),
+        std::string(reinterpret_cast<const char*>(sqlite3_column_text(statement, 0))));
+    sqlite3_finalize(statement);
+    CPPUNIT_ASSERT_EQUAL(SQLITE_OK, sqlite3_prepare_v2(backup,
+        "PRAGMA user_version", -1, &statement, nullptr));
+    CPPUNIT_ASSERT_EQUAL(SQLITE_ROW, sqlite3_step(statement));
+    CPPUNIT_ASSERT_EQUAL(3, sqlite3_column_int(statement, 0));
+    sqlite3_finalize(statement);
+    sqlite3_close(backup);
+    verified = true;
+    std::remove(backupPath.c_str());
+  }
+  closedir(directory);
+  CPPUNIT_ASSERT(verified);
 }
 
 } // namespace aria2

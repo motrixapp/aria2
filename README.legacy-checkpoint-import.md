@@ -243,3 +243,20 @@ baseline, drop a real activation RPC response, restart after graceful shutdown
 and SIGKILL, and require the same paused GID without a duplicate. They also cover
 atomic task/grant rollback, changed or replaced backups, missing files, symlinks,
 schema upgrades and an older schema-4 binary refusing schema 5.
+
+## Schema upgrade backups
+
+Before upgrading an existing SQLite schema to 5, the engine saves a standalone
+SQLite snapshot beside the database as
+`<database>.pre-schema5-v<old-version>.<timestamp>.<attempt>.db`. The SQLite backup
+API includes committed WAL pages. The engine verifies the snapshot and syncs it
+before migration; a backup failure prevents the upgrade. Snapshots use owner-only
+permissions on POSIX and never overwrite earlier backups. Fresh databases and
+reopening an already-current database do not create snapshots.
+
+Older engines refuse schema 5 without deleting task records. To downgrade, stop
+all engine processes and retain the upgraded database and its WAL/SHM files, then
+restore a verified pre-upgrade snapshot to a separate database path for the old
+engine. The snapshot contains only state from before the upgrade; tasks and
+progress added afterward remain in the retained schema 5 database. No automatic
+downgrade or backup deletion is performed.

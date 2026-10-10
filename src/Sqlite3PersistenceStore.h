@@ -56,6 +56,7 @@ public:
   Sqlite3PersistenceStore& operator=(const Sqlite3PersistenceStore&) = delete;
 
   void open();
+  void backupBeforeMigration(int schemaVersion);
   void finalCheckpointAndClose();
 
   std::string queryPragma(const std::string& name) const;

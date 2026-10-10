@@ -107,6 +107,11 @@ jobs:
       env:
         ARIA2_E2E_BIN: ${{ github.workspace }}/src/aria2c
       run: node --test test/e2e/task-cookies.e2e.test.mjs
+    - name: Verify legacy recovery and schema upgrade snapshots
+      if: matrix.bittorrent == 'with-bt'
+      env:
+        ARIA2_E2E_BIN: ${{ github.workspace }}/src/aria2c
+      run: node --test test/e2e/legacy-checkpoint-import.e2e.test.mjs
     - name: Show test-suite.log on failure
       if: failure()
       run: |

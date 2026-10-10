@@ -468,6 +468,9 @@ void migrateIfNeeded(Sqlite3PersistenceStore& store)
   }
 
   // v < kCurrentSchemaVersion: run migrations step by step.
+  if (v > 0) {
+    store.backupBeforeMigration(v);
+  }
   while (v < kCurrentSchemaVersion) {
     bool found = false;
     for (const auto& m : kMigrations) {

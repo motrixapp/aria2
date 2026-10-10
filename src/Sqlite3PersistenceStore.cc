@@ -41,11 +41,13 @@
 #include <string>
 
 #include "DlAbortEx.h"
+#include "a2io.h"
 #include "fmt.h"
 #include "LogFactory.h"
 #include "Logger.h"
 #include "Sqlite3BtProgressInfoFile.h"
 #include "Sqlite3Migrations.h"
+#include "util.h"
 
 namespace aria2 {
 
@@ -171,6 +173,111 @@ void Sqlite3PersistenceStore::applyPragmas()
       throw DL_ABORT_EX(
           fmt("sqlite3-persistence: PRAGMA failed: %s", errstr.c_str()));
     }
+  }
+}
+
+void Sqlite3PersistenceStore::backupBeforeMigration(int schemaVersion)
+{
+  // Copy through SQLite so committed WAL pages are included. Never replace a
+  // previous snapshot: a failed migration can be retried against newer data.
+  const auto prefix = dbPath_ + ".pre-schema" +
+                      std::to_string(kCurrentSchemaVersion) + "-v" +
+                      std::to_string(schemaVersion) + ".";
+  std::string backupPath;
+  int fd = -1;
+  for (unsigned int attempt = 0; attempt < 1000; ++attempt) {
+    backupPath = prefix + std::to_string(static_cast<long long>(std::time(nullptr))) +
+                 "." + std::to_string(attempt) + ".db";
+    fd = ::a2open(utf8ToWPath(backupPath).c_str(),
+                O_RDWR | O_CREAT | O_EXCL | O_BINARY, S_IRUSR | S_IWUSR);
+    if (fd >= 0) {
+      break;
+    }
+    if (errno != EEXIST) {
+      throw DL_ABORT_EX("sqlite3-persistence: cannot create pre-migration backup; "
+                        "database was not upgraded");
+    }
+  }
+  if (fd < 0) {
+    throw DL_ABORT_EX("sqlite3-persistence: pre-migration backup names exhausted");
+  }
+
+  sqlite3* destination = nullptr;
+  try {
+    if (sqlite3_open_v2(backupPath.c_str(), &destination,
+                        SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK ||
+        sqlite3_exec(destination, "PRAGMA synchronous=FULL;", nullptr,
+                      nullptr, nullptr) != SQLITE_OK) {
+      throw DL_ABORT_EX("sqlite3-persistence: cannot open pre-migration backup");
+    }
+    auto* backup = sqlite3_backup_init(destination, "main", db_, "main");
+    if (!backup) {
+      throw DL_ABORT_EX("sqlite3-persistence: cannot initialize pre-migration backup");
+    }
+    const int stepResult = sqlite3_backup_step(backup, -1);
+    const int finishResult = sqlite3_backup_finish(backup);
+    if (stepResult != SQLITE_DONE || finishResult != SQLITE_OK) {
+      throw DL_ABORT_EX("sqlite3-persistence: pre-migration backup failed; "
+                        "database was not upgraded");
+    }
+    // Backup copies the source header, including its WAL journal mode. Reopen
+    // before switching modes so SQLite does not use the empty target's cached
+    // DELETE mode and leave a WAL-marked header in the supposedly standalone DB.
+    sqlite3_close_v2(destination);
+    destination = nullptr;
+    if (sqlite3_open_v2(backupPath.c_str(), &destination,
+                        SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK ||
+        sqlite3_exec(destination, "PRAGMA synchronous=FULL; "
+                                  "PRAGMA journal_mode=DELETE;", nullptr,
+                      nullptr, nullptr) != SQLITE_OK ||
+        !runQuickCheck(destination)) {
+      throw DL_ABORT_EX("sqlite3-persistence: cannot finalize pre-migration backup");
+    }
+    sqlite3_close_v2(destination);
+    destination = nullptr;
+    // The initial backup handle can leave an orphan shared-memory file after
+    // its copied WAL header is converted. Both destination handles are closed.
+    a2unlink(utf8ToWPath((backupPath + "-wal")).c_str());
+    a2unlink(utf8ToWPath((backupPath + "-shm")).c_str());
+#ifndef __MINGW32__
+    if (fsync(fd) != 0) {
+#else
+    if (_commit(fd) != 0) {
+#endif
+      throw DL_ABORT_EX("sqlite3-persistence: cannot sync pre-migration backup");
+    }
+#ifndef __MINGW32__
+    // Persist the directory entry before allowing schema changes.
+    const auto separator = backupPath.find_last_of('/');
+    const auto directory = separator == std::string::npos
+                               ? std::string(".")
+                               : backupPath.substr(0, separator + 1);
+    const int directoryFd = ::open(directory.c_str(), O_RDONLY);
+    if (directoryFd < 0) {
+      throw DL_ABORT_EX("sqlite3-persistence: cannot open backup directory");
+    }
+    const int syncResult = fsync(directoryFd);
+    ::close(directoryFd);
+    if (syncResult != 0) {
+      throw DL_ABORT_EX("sqlite3-persistence: cannot sync backup directory");
+    }
+#endif
+    ::close(fd);
+    fd = -1;
+    A2_LOG_NOTICE(fmt("sqlite3-persistence: saved schema %d backup at '%s' "
+                      "before upgrading to schema %d", schemaVersion,
+                      backupPath.c_str(), kCurrentSchemaVersion));
+  }
+  catch (...) {
+    sqlite3_close_v2(destination);
+    if (fd >= 0) {
+      ::close(fd);
+    }
+    a2unlink(utf8ToWPath(backupPath).c_str());
+    a2unlink(utf8ToWPath((backupPath + "-wal")).c_str());
+    a2unlink(utf8ToWPath((backupPath + "-shm")).c_str());
+    a2unlink(utf8ToWPath((backupPath + "-journal")).c_str());
+    throw;
   }
 }
 

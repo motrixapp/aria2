@@ -7,7 +7,7 @@ on:
     inputs:
       version:
         description: 'Version for a dry run (no leading v)'
-        default: '1.37.0-motrix.14-dev'
+        default: '1.37.0-motrix.17-dev'
 
 permissions:
   contents: write
@@ -257,11 +257,11 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         repository: agalwood/Motrix
-        ref: 75dcb03c9a53777ccb58cb9553514cdb44f20f15
+        ref: de9abc8166066823f11c83141a341a1045c0e416
         path: Motrix
-    - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+    - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       with:
-        version: 11.22.0
+        version: 12.10.1
         run_install: false
     - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
@@ -397,8 +397,125 @@ jobs:
     - name: Verify task cookies and credential redirects
       run: node --test test/e2e/task-cookies.e2e.test.mjs
 
+  legacy-checkpoint-contract:
+    needs: [macos, windows, linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { asset: darwin-arm64, runner: macos-26, baseline_sha256: bb9e8abf19423e593b4d5962d98ea4a798f94fd2a8431ba214bae5838382dc68 }
+        - { asset: darwin-x64, runner: macos-26-intel, baseline_sha256: c578852e975f94e8d2e163e696a4dfc81dec4457618219c09853d20d233900e0 }
+        - { asset: linux-x64, runner: ubuntu-24.04, baseline_sha256: bd48c06cbf6bebc32e1b75c2abbdad5c0787800b16266147bd0bf5904ce16e94 }
+        - { asset: linux-arm64, runner: ubuntu-24.04-arm, baseline_sha256: 65511295a68fd3bcb002022c2a09364f46a8da6eb385d6c2c3915c5ea349692f }
+        - { asset: win32-x64, runner: windows-2025 }
+        - { asset: win32-ia32, runner: windows-2025 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 24
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      with:
+        name: ${{ matrix.asset }}
+        path: dist
+    - name: Extract candidate
+      shell: bash
+      run: |
+        mkdir bin
+        python - <<'PYTHON'
+        import pathlib, tarfile, zipfile
+        archive = next(pathlib.Path('dist').iterdir())
+        if archive.suffix == '.zip':
+            with zipfile.ZipFile(archive) as source:
+                source.extractall('bin')
+        else:
+            with tarfile.open(archive) as source:
+                source.extractall('bin', filter='data')
+        PYTHON
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          echo "ARIA2_E2E_BIN=$GITHUB_WORKSPACE/bin/aria2c.exe" >> "$GITHUB_ENV"
+        else
+          chmod +x bin/aria2c
+          echo "ARIA2_E2E_BIN=$GITHUB_WORKSPACE/bin/aria2c" >> "$GITHUB_ENV"
+        fi
+    - name: Fetch checksum-pinned schema 3 baseline
+      if: runner.os != 'Windows'
+      shell: bash
+      env:
+        BASELINE_SHA256: ${{ matrix.baseline_sha256 }}
+      run: |
+        curl --fail --location --retry 3 --output baseline.tar.gz \
+          "https://github.com/motrixapp/aria2/releases/download/v1.37.0-motrix.16/aria2c-1.37.0-motrix.16-${{ matrix.asset }}.tar.gz"
+        python - <<'PYTHON'
+        import hashlib, os, pathlib, tarfile
+        assert hashlib.sha256(pathlib.Path('baseline.tar.gz').read_bytes()).hexdigest() == os.environ['BASELINE_SHA256']
+        pathlib.Path('baseline').mkdir()
+        with tarfile.open('baseline.tar.gz') as archive:
+            archive.extractall('baseline', filter='data')
+        PYTHON
+        chmod +x baseline/aria2c
+        echo "ARIA2_SCHEMA3_BIN=$GITHUB_WORKSPACE/baseline/aria2c" >> "$GITHUB_ENV"
+    - name: Verify native import, WAL upgrades, downgrade refusal and crash recovery
+      if: runner.os != 'Windows'
+      run: node --test test/e2e/legacy-checkpoint-import.e2e.test.mjs
+    - name: Verify Windows fails closed
+      if: runner.os == 'Windows'
+      run: node --test test/e2e/legacy-checkpoint-unsupported.e2e.test.mjs
+
+  motrix-migration-consumer:
+    needs: [macos, linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { asset: darwin-arm64, runner: macos-26 }
+        - { asset: linux-x64, runner: ubuntu-24.04 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: agalwood/Motrix
+        ref: de9abc8166066823f11c83141a341a1045c0e416
+        path: Motrix
+    - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      with:
+        version: 12.10.1
+        run_install: false
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 24
+        cache: pnpm
+        cache-dependency-path: Motrix/pnpm-lock.yaml
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      with:
+        name: ${{ matrix.asset }}
+        path: dist
+    - name: Extract candidate
+      run: |
+        mkdir bin
+        tar -xzf dist/*.tar.gz -C bin
+        chmod +x bin/aria2c
+        echo "MOTRIX_LEGACY_CHECKPOINT_ENGINE=$GITHUB_WORKSPACE/bin/aria2c" >> "$GITHUB_ENV"
+    - name: Install Motrix dependencies
+      working-directory: Motrix
+      env:
+        MOTRIX_SKIP_ELECTRON_REBUILD: '1'
+        MOTRIX_SKIP_ENGINE_FETCH: '1'
+      run: pnpm install --frozen-lockfile
+    - name: Verify Motrix migration adapter and activation recovery
+      working-directory: Motrix
+      run: >-
+        pnpm exec vitest run
+        src/core/legacy-import
+        src/core/engine/aria2/aria2-legacy-checkpoint.test.ts
+        src/core/engine/aria2/aria2-legacy-checkpoint.integration.test.ts
+        src/core/engine/aria2/aria2-legacy-bt-policy.test.ts
+        src/core/engine/aria2/aria2-sqlite-recovery.test.ts
+        --reporter=verbose
+
   publish:
-    needs: [macos-smoke, windows-smoke, motrix-windows-consumer, linux, android, cookie-contract]
+    needs: [macos-smoke, windows-smoke, motrix-windows-consumer, linux, android, cookie-contract, legacy-checkpoint-contract, motrix-migration-consumer]
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     steps:
@@ -414,12 +531,16 @@ jobs:
           'aria2 fork build for Motrix. Base: upstream 1.37.0.' \
           '' \
           'Highlights:' \
-          '- Add aria2.addUriWithCookies and aria2.setTaskCookies for isolated, task-scoped cookies.' \
-          '- Match cookie domain, path, Secure and expiry on every HTTP request and redirect.' \
-          '- Stop forwarding raw Cookie and Authorization headers across origins.' \
-          '- Restore task cookie jars from dedicated SQLite tables across engine restarts.' \
-          '- Remove task cookie rows on terminal completion, failure, cancellation and result deletion.' \
-          '- Gate all six desktop/server release binaries with local HTTP, HTTPS, Range and restart contracts.' \
+          '- Import native Motrix v1 .aria2 checkpoints with authenticated, idempotent RPCs.' \
+          '- Persist paused BT recovery with the original GID, verified metadata and crash-safe SQLite transactions.' \
+          '- Preserve a complete SQLite backup, including committed WAL pages, before upgrading an existing schema to 5.' \
+          '- Gate macOS and Linux migration recovery against the release binaries and the Motrix application.' \
+          '- Windows explicitly refuses unsupported legacy-progress recovery.' \
+          '- Retain task-scoped cookies, cross-origin credential isolation and long-path support.' \
+          '' \
+          'Compatibility:' \
+          '- Schema 5 cannot be opened by older engines. Downgrades require the pre-upgrade backup; do not delete or reset the upgraded database.' \
+          '- BT activation verifies pieces and may write shared-piece bytes in an unselected adjacent file; zero upload is not guaranteed.' \
           '' \
           'All attached archives are covered by SHA256SUMS.' \
           > release-notes.md
