@@ -51,7 +51,7 @@ async function engine(t,dir,{ sqlite=true, auth=true, bin, extra=[] }={}) {
 }
 function db(e,fn){const d=new DatabaseSync(`${e.dir}/session.db`);try{d.exec('PRAGMA busy_timeout=5000');return fn(d)}finally{d.close()}}
 function count(e,table){return db(e,d=>d.prepare(`SELECT count(*) AS n FROM ${table}`).get().n)}
-async function request(e,name,{ bytes=control(), data=payload, gid='1234567890abcdef', token=`legacy_test_${name}_token` }={}) {
+async function request(e,name,{ bytes=control(), data=payload, gid='1234567890abcdef', token=`legacy_test_${sha(Buffer.from(name)).slice(0,32)}_token` }={}) {
   const target=nativePath(path.join(e.dir,`${name}.bin`));await writeFile(target,data,{mode:0o600})
   const s=await stat(target,{bigint:true});const observed=await e.rpc.call(inspect,[{controlFile:bytes.toString('base64')}])
   return {token,gid,controlFile:bytes.toString('base64'),controlDigest:sha(bytes),targetPath:target,
@@ -222,7 +222,7 @@ before(async()=>{
 })
 after(async()=>{await new Promise(r=>server.close(r));if(process.env.ARIA2_E2E_KEEP_TMP)console.log(`workDir kept: ${root}`);else await rm(root,{recursive:true,force:true})})
 describe('legacy checkpoint engine import',()=>{
-  it('imports Unicode and long canonical Windows paths without changing payload bytes',{skip:!windows},async t=>{
+  it('imports Unicode and long canonical paths without changing payload bytes',async t=>{
     const e=await engine(t,`${root}/windows-long`)
     const name=`下载-данные/${'deep-directory/'.repeat(20)}partial`
     await mkdir(path.dirname(`${e.dir}/${name}.bin`),{recursive:true})
@@ -259,11 +259,13 @@ describe('legacy checkpoint engine import',()=>{
     const blocker=new DatabaseSync(`${e.dir}/session.db`)
     blocker.exec('BEGIN IMMEDIATE')
     const importing=e.rpc.call(importMethod,[req])
-    importing.catch(()=>{}) // Awaited below after releasing the deliberate DB lock.
+    let importError
+    importing.catch(error=>{importError=error}) // Awaited after releasing the DB lock.
     // Hold the commit transaction busy after read-only validation. Observe the
     // actual Windows sharing denial before attempting both replacement forms.
     try {
       await until(async()=>{
+        if(importError)throw importError
         try { const writer=await open(req.targetPath,'r+');await writer.close();return false }
         catch(error) { if(['EBUSY','EACCES','EPERM'].includes(error.code))return true;throw error }
       },Boolean,3000)

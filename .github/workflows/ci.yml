@@ -218,22 +218,28 @@ jobs:
       run: |
         node --test test/e2e/legacy-checkpoint-import.e2e.test.mjs 2>&1 | Tee-Object -FilePath test-results/ws-contract/legacy-import.txt
         if ($LASTEXITCODE -ne 0) { throw 'Legacy import contract failed' }
+    # Collect independent consumer and WebSocket failures even if a legacy
+    # fixture fails. The earlier failed step still fails this required job.
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      if: ${{ !cancelled() }}
       with:
         repository: agalwood/Motrix
-        ref: 8e01f0abb659c8cf09beee16b8c6718eec7f82dd
+        ref: adc987f230ae48a0cc5328090271b292180e879b
         path: Motrix
     - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      if: ${{ !cancelled() }}
       with:
         version: 12.10.1
         run_install: false
     - name: Install migration consumer dependencies
+      if: ${{ !cancelled() }}
       working-directory: Motrix
       env:
         MOTRIX_SKIP_ELECTRON_REBUILD: '1'
         MOTRIX_SKIP_ENGINE_FETCH: '1'
       run: pnpm install --frozen-lockfile
     - name: Verify actual Motrix Windows migration consumer
+      if: ${{ !cancelled() }}
       working-directory: Motrix
       env:
         MOTRIX_LEGACY_CHECKPOINT_ENGINE: ${{ github.workspace }}\bin\aria2c.exe
@@ -246,6 +252,7 @@ jobs:
         src/core/legacy-import/session-parser.win32.test.ts
         --reporter=verbose
     - name: Verify persistent WebSocket RPC
+      if: ${{ !cancelled() }}
       env:
         ARIA2_E2E_BIN: ${{ github.workspace }}\bin\aria2c.exe
         ARIA2_E2E_KEEP_TMP: '1'
