@@ -47,7 +47,17 @@ async function engine(t,dir,{ sqlite=true, auth=true, bin, extra=[] }={}) {
     '--split=1','--max-connection-per-server=1','--max-tries=1','--seed-time=0','--pause=true',...extra,
   ]});t.after(()=>stopInstance(proc));const rpc=new Aria2Rpc({port:rpcPort,secret:auth?secret:''})
   await until(()=>rpc.call('aria2.getVersion').catch(()=>null),Boolean)
-  return {rpc,dir,listenPort,stop:signal=>stopInstance(proc,signal)}
+  return {rpc,dir,listenPort,stop:async signal=>{
+    if(signal==='graceful') {
+      // Node SIGTERM terminates Windows processes; use the real shutdown RPC
+      // to distinguish normal persistence/cleanup from TerminateProcess.
+      await rpc.call('aria2.shutdown')
+      await until(async()=>proc.exitCode!==null||proc.signalCode!==null,Boolean,15000)
+      assert.equal(proc.exitCode,0)
+      return
+    }
+    return stopInstance(proc,signal)
+  }}
 }
 function db(e,fn){const d=new DatabaseSync(`${e.dir}/session.db`);try{d.exec('PRAGMA busy_timeout=5000');return fn(d)}finally{d.close()}}
 function count(e,table){return db(e,d=>d.prepare(`SELECT count(*) AS n FROM ${table}`).get().n)}
@@ -424,7 +434,7 @@ describe('legacy checkpoint engine import',()=>{
     t.diagnostic('baseline reproduced: ordinary addTorrent + rpc-save-upload-metadata=false loses paused task on restart')
   })
   it('atomically binds a read-only metadata reference and restores a lost paused RPC across shutdown and SIGKILL',async t=>{
-    for(const signal of ['SIGTERM','SIGKILL']) {
+    for(const signal of ['graceful','SIGKILL']) {
       const dir=`${root}/bt-durable-${signal}`;let e=await engine(t,dir,{extra:['--save-session-interval=0']})
       const state=await durableBtRequest(e,signal),before=await readFile(state.legacyMetadata)
       assert.ok((await e.rpc.call('aria2.getVersion')).enabledFeatures.includes('LegacyTorrentMetadataV1'))

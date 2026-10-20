@@ -219,7 +219,7 @@ invalidation, so it alone does not prove a resumable task exists.
 Receipt claims deliberately remain conservative after consumption. There is
 no cleanup/undo RPC in this version. Cross-platform moves, absent unselected BT
 files, payload relocation, directory output remapping outside the base, and
-network filesystem support require a later explicitly versioned extension.
+Windows network filesystem support require a later explicitly versioned extension.
 This protocol does not claim a file-lock guarantee against arbitrary concurrent
 external writers; the application must establish that the old engine is closed.
 
