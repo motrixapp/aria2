@@ -35,6 +35,8 @@
 #ifdef __MINGW32__
 #  undef _WIN32_WINNT
 #  define _WIN32_WINNT 0x0600
+#  undef WINVER
+#  define WINVER 0x0600
 #endif
 #include "LegacyCheckpointImport.h"
 #ifdef __MINGW32__
@@ -917,6 +919,7 @@ void consumeLegacyCheckpoint(Sqlite3PersistenceStore& store,
     return;
   auto token = s.column(0), digest = s.column(1), gid = s.column(2),
        controlDigest = s.column(3);
+  std::vector<Handle> payloadHandles;
   store.withTransaction([&]() {
     Statement p(store.raw(), CHECKPOINT_PROOF_SQL);
     p.text(1, path);
@@ -971,6 +974,7 @@ void consumeLegacyCheckpoint(Sqlite3PersistenceStore& store,
       if (!(statHandle(handle.fd) == expected))
         throw DL_ABORT_EX(
             "Legacy checkpoint payload changed before restoration");
+      payloadHandles.push_back(std::move(handle));
     }
     if (matched != context.getFileEntries().size())
       throw DL_ABORT_EX("Legacy checkpoint native task file map mismatch");

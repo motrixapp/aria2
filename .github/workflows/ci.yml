@@ -43,7 +43,7 @@ jobs:
     - name: MacOS setup
       if: runner.os == 'macOS'
       run: |
-        brew install cppunit gettext openssl libssh2 c-ares sqlite3 \
+        brew install cppunit gettext openssl@3 libssh2 c-ares sqlite3 \
           autoconf automake pkg-config libtool
     - name: Setup clang (Linux)
       if: runner.os == 'Linux' && matrix.compiler == 'clang'
@@ -94,6 +94,8 @@ jobs:
     - name: Configure autotools (macOS)
       if: runner.os == 'macOS'
       run: |
+        # Match the release's OpenSSL 3 ABI rather than Homebrew's moving default.
+        export PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
         ./configure \
           --with-openssl --without-gnutls --without-appletls \
           --disable-nls
