@@ -197,6 +197,10 @@ jobs:
         if ($LASTEXITCODE -ne 0) { throw 'could not turn LongPathsEnabled off' }
         node --test test/e2e/windows-long-path.e2e.test.mjs
         if ($LASTEXITCODE -ne 0) { throw 'long-path download failed' }
+    - name: Verify Windows legacy import and crash recovery
+      env:
+        ARIA2_E2E_BIN: ${{ github.workspace }}\bin\aria2c.exe
+      run: node --test test/e2e/legacy-checkpoint-import.e2e.test.mjs
     - name: Verify persistent WebSocket RPC
       env:
         ARIA2_E2E_BIN: ${{ github.workspace }}\bin\aria2c.exe

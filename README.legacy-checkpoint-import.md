@@ -5,8 +5,8 @@ SQLite checkpoint store. It creates no engine task, starts no download, does not
 unpause or seed, and never opens payloads for writing. All RPCs use the existing
 RPC token authorization. The current implementation advertises the runtime
 `LegacyCheckpointImportV1` feature only with active SQLite persistence, a
-configured nonempty RPC secret, SHA-256, and POSIX `openat`/`O_NOFOLLOW` support.
-Windows and non-SQLite builds fail closed. Native version 0 files are refused
+configured nonempty RPC secret, SHA-256, and safe native file access (POSIX `openat`/`O_NOFOLLOW` or Windows NTFS handles).
+Non-SQLite builds fail closed. Native version 0 files are refused
 because their host-endian encoding is ambiguous across platforms.
 
 The application must verify the capability through `aria2.getVersion` before
@@ -14,6 +14,32 @@ using these methods. Its own offline source snapshot, backup, consent, payload
 ownership and HTTP resource-validator policies remain necessary. A valid
 checkpoint reports recorded ranges; it does not establish that historical HTTP
 bytes match the current remote resource. BT activation must verify pieces.
+
+## Windows file contract
+
+Windows uses the same v1 RPCs and receipts. Wire paths are canonical, uppercase
+local drive paths with forward slashes (`C:/Users/name/Downloads/file`), matching
+aria2 native SQLite keys. Applications retain their own native backslash paths
+and translate at the engine boundary. Unicode and paths beyond MAX_PATH use
+UTF-16 extended paths internally; callers must not supply a device namespace.
+Only local fixed NTFS volumes with persistent ACLs are admitted. UNC/network,
+FAT/exFAT, reparse points (including junctions and cloud placeholders), short
+names, alternate casing, alternate data streams and DOS device names fail closed.
+
+Every payload and metadata backup must be owned by the engine user. Its DACL
+must not grant modification rights to another principal except SYSTEM or the
+built-in Administrators group. Missing DACLs and unrecognized ACE forms are
+refused; ACLs are never silently rewritten. Windows `chmod`/POSIX mode bits are
+not an ownership check. The engine verifies the actual handle's security
+information, volume serial, NTFS file ID, link count, length, last-write time and
+metadata-change time (not creation time), then rechecks before commit.
+
+Read-only handles share reads only, so existing writers cause rejection and new
+writers/renames cannot race the validation. All checked ancestor directory
+handles are retained until the operation finishes, without write/delete sharing.
+Canonical handle paths reject aliases and substituted drives. Once validation
+finishes, the usual v1 requirement that the old engine is closed still applies;
+these handles are not lifetime locks on the migrated task.
 
 ## Methods
 
@@ -190,7 +216,7 @@ invalidation, so it alone does not prove a resumable task exists.
 Receipt claims deliberately remain conservative after consumption. There is
 no cleanup/undo RPC in this version. Cross-platform moves, absent unselected BT
 files, payload relocation, directory output remapping outside the base, and
-Windows ACL/handle support require a later explicitly versioned extension.
+network filesystem support require a later explicitly versioned extension.
 This protocol does not claim a file-lock guarantee against arbitrary concurrent
 external writers; the application must establish that the old engine is closed.
 

@@ -457,11 +457,7 @@ jobs:
         chmod +x baseline/aria2c
         echo "ARIA2_SCHEMA3_BIN=$GITHUB_WORKSPACE/baseline/aria2c" >> "$GITHUB_ENV"
     - name: Verify native import, WAL upgrades, downgrade refusal and crash recovery
-      if: runner.os != 'Windows'
       run: node --test test/e2e/legacy-checkpoint-import.e2e.test.mjs
-    - name: Verify Windows fails closed
-      if: runner.os == 'Windows'
-      run: node --test test/e2e/legacy-checkpoint-unsupported.e2e.test.mjs
 
   motrix-migration-consumer:
     needs: [macos, linux]
@@ -535,7 +531,7 @@ jobs:
           '- Persist paused BT recovery with the original GID, verified metadata and crash-safe SQLite transactions.' \
           '- Preserve a complete SQLite backup, including committed WAL pages, before upgrading an existing schema to 5.' \
           '- Gate macOS and Linux migration recovery against the release binaries and the Motrix application.' \
-          '- Windows explicitly refuses unsupported legacy-progress recovery.' \
+          '- Windows verifies native legacy-progress import and crash recovery.' \
           '- Retain task-scoped cookies, cross-origin credential isolation and long-path support.' \
           '' \
           'Compatibility:' \

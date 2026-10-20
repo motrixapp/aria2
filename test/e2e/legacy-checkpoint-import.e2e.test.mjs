@@ -1,8 +1,9 @@
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createServer, request as forwardHttp } from 'node:http'
-import { chmod, copyFile, link, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, link, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile as fsWriteFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -10,6 +11,13 @@ import { gunzipSync, gzipSync } from 'node:zlib'
 import { allocPorts, spawnAria2, stopInstance } from './helpers/aria2-process.mjs'
 import { Aria2Rpc } from './helpers/rpc-client.mjs'
 import { encode } from './helpers/bencode.mjs'
+const windows=process.platform==='win32'
+const nativePath=p=>windows?p.replaceAll('\\','/'):p
+let windowsOwner
+async function writeFile(filename, ...args) {
+  await fsWriteFile(filename, ...args)
+  if(windows)execFileSync('icacls.exe',[filename,'/setowner',`*${windowsOwner}`])
+}
 const secret='legacy-fixture-secret', payload=Buffer.alloc(98305,0x63)
 const previousBin=process.env.ARIA2_SCHEMA4_BIN || process.env.ARIA2_SCHEMA3_BIN
 const previousSchema=process.env.ARIA2_SCHEMA4_BIN ? 4 : 3
@@ -44,7 +52,7 @@ async function engine(t,dir,{ sqlite=true, auth=true, bin, extra=[] }={}) {
 function db(e,fn){const d=new DatabaseSync(`${e.dir}/session.db`);try{d.exec('PRAGMA busy_timeout=5000');return fn(d)}finally{d.close()}}
 function count(e,table){return db(e,d=>d.prepare(`SELECT count(*) AS n FROM ${table}`).get().n)}
 async function request(e,name,{ bytes=control(), data=payload, gid='1234567890abcdef', token=`legacy_test_${name}_token` }={}) {
-  const target=path.join(e.dir,`${name}.bin`);await writeFile(target,data,{mode:0o600})
+  const target=nativePath(path.join(e.dir,`${name}.bin`));await writeFile(target,data,{mode:0o600})
   const s=await stat(target,{bigint:true});const observed=await e.rpc.call(inspect,[{controlFile:bytes.toString('base64')}])
   return {token,gid,controlFile:bytes.toString('base64'),controlDigest:sha(bytes),targetPath:target,
     expected:{kind:observed.kind,totalLength:observed.totalLength,pieceLength:observed.pieceLength,infoHash:observed.infoHash},
@@ -192,7 +200,13 @@ async function dropActivationResponse(t,e,activation) {
   const actual=await acknowledged;assert.equal(actual.result,activation.options.gid,JSON.stringify(actual))
 }
 before(async()=>{
-  root=await realpath(await mkdtemp(path.join(tmpdir(),'aria2-legacy-import-')))
+  root=nativePath(await realpath(await mkdtemp(path.join(tmpdir(),'aria2-legacy-import-'))))
+  if(windows) {
+    const sid=windowsOwner=execFileSync('powershell.exe',['-NoProfile','-Command','[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value'],{encoding:'utf8'}).trim()
+    execFileSync('icacls.exe',[root,'/inheritance:r','/grant:r',`*${sid}:(OI)(CI)F`,'*S-1-5-18:(OI)(CI)F','*S-1-5-32-544:(OI)(CI)F'])
+    // Elevated runner tokens can default the owner to Administrators.
+    execFileSync('icacls.exe',[root,'/setowner',`*${sid}`])
+  }
   nativeControl=await readFile(new URL('partial.bin.aria2',fixture));nativePartial=gunzipSync(await readFile(new URL('partial.bin.gz',fixture)))
   server=createServer((req,res)=>{requests.push({url:req.url,range:req.headers.range});
     if(req.url==='/chunked'){res.writeHead(200,{'transfer-encoding':'chunked'});res.end(nativePayload);return}
@@ -205,6 +219,36 @@ before(async()=>{
 })
 after(async()=>{await new Promise(r=>server.close(r));if(process.env.ARIA2_E2E_KEEP_TMP)console.log(`workDir kept: ${root}`);else await rm(root,{recursive:true,force:true})})
 describe('legacy checkpoint engine import',()=>{
+  it('imports Unicode and long canonical Windows paths without changing payload bytes',{skip:!windows},async t=>{
+    const e=await engine(t,`${root}/windows-long`)
+    const name=`下载-данные/${'deep-directory/'.repeat(20)}partial`
+    await mkdir(path.dirname(`${e.dir}/${name}.bin`),{recursive:true})
+    const req=await request(e,name)
+    assert.ok(req.targetPath.length>260)
+    const original=await readFile(req.targetPath)
+    const result=await e.rpc.call(importMethod,[req])
+    assert.equal(result.status,'created')
+    assert.deepEqual(await e.rpc.call(reconcile,[query(req)]),result)
+    assert.deepEqual(await readFile(req.targetPath),original)
+  })
+  it('rejects Windows junctions, aliases, ADS, foreign owners and open writers',{skip:!windows},async t=>{
+    const e=await engine(t,`${root}/windows-safety`),req=await request(e,'safe')
+    const original=await readFile(req.targetPath)
+    const junction=`${root}/junction`;await symlink(e.dir,junction,'junction')
+    const alias=`${junction}/safe.bin`
+    for(const target of [alias,req.targetPath.toLowerCase(),`${req.targetPath}:stream`,
+      `${e.dir}/safe.bin.`,`${e.dir}/CON`,req.targetPath.replaceAll('/','\\')]) {
+      await assert.rejects(e.rpc.call(importMethod,[{...req,targetPath:target,files:[{...req.files[0],path:target}]}]))
+    }
+    execFileSync('icacls.exe',[req.targetPath,'/setowner','*S-1-5-32-544'])
+    await assert.rejects(e.rpc.call(importMethod,[req]),/exclusively owned/)
+    execFileSync('icacls.exe',[req.targetPath,'/setowner',`*${windowsOwner}`])
+    const writer=await open(req.targetPath,'r+')
+    try { await assert.rejects(e.rpc.call(importMethod,[req]),/safe path/) }
+    finally { await writer.close() }
+    assert.equal(count(e,'task_progress'),0)
+    assert.deepEqual(await readFile(req.targetPath),original)
+  })
   it('inspects native bitfields and partial blocks without database, file or network mutation',async t=>{
     const e=await engine(t,`${root}/inspect`);const bytes=control(),originalRequests=requests.length
     const result=await e.rpc.call(inspect,[{controlFile:bytes.toString('base64')}])
@@ -249,7 +293,11 @@ describe('legacy checkpoint engine import',()=>{
     for(const bad of variants)await assert.rejects(e.rpc.call(importMethod,[bad]))
     const sym=`${e.dir}/alias.bin`;await symlink(req.targetPath,sym);await assert.rejects(e.rpc.call(importMethod,[{...req,targetPath:sym,files:[{...req.files[0],path:sym}]}]),/safe path/)
     await link(req.targetPath,`${e.dir}/hard.bin`);await assert.rejects(e.rpc.call(importMethod,[req]),/exclusively owned/);await rm(`${e.dir}/hard.bin`)
-    await chmod(req.targetPath,0o666);await assert.rejects(e.rpc.call(importMethod,[req]),/exclusively owned/);await chmod(req.targetPath,0o600)
+    if(windows)execFileSync('icacls.exe',[req.targetPath,'/grant','*S-1-1-0:W'])
+    else await chmod(req.targetPath,0o666)
+    await assert.rejects(e.rpc.call(importMethod,[req]),/exclusively owned/)
+    if(windows)execFileSync('icacls.exe',[req.targetPath,'/remove:g','*S-1-1-0'])
+    else await chmod(req.targetPath,0o600)
     await rename(req.targetPath,`${req.targetPath}.old`);await writeFile(req.targetPath,payload,{mode:0o600});await assert.rejects(e.rpc.call(importMethod,[req]),/identity changed/)
     assert.equal(count(e,'task_progress'),0)
   })

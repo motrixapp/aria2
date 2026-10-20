@@ -34,7 +34,7 @@ EXTRALIBS=
 case "$host" in
   *mingw*)
     win_build=yes
-    EXTRALIBS="-lws2_32 -lwsock32 -lgdi32 -lwinmm -liphlpapi -lpsapi $EXTRALIBS"
+    EXTRALIBS="-ladvapi32 -lws2_32 -lwsock32 -lgdi32 -lwinmm -liphlpapi -lpsapi $EXTRALIBS"
     # Define _POSIX_C_SOURCE to 1. This makes {asc,local}time_r
     # available from <time.h> even without (un)helpful interference
     # from <pthread.h>, and also defines __USE_MINGW_ANSI_STDIO.
