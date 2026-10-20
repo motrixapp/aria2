@@ -266,9 +266,9 @@ describe('legacy checkpoint engine import',()=>{
     try {
       await until(async()=>{
         if(importError)throw importError
-        try { const writer=await open(req.targetPath,'r+');await writer.close();return false }
-        catch(error) { if(['EBUSY','EACCES','EPERM'].includes(error.code))return true;throw error }
-      },Boolean,3000)
+        return readFile(`${e.dir}/engine.log`,'utf8')
+      },log=>log.includes('Legacy checkpoint payload handles validated; awaiting commit'),3000)
+      await assert.rejects(open(req.targetPath,'r+').then(handle=>handle.close()))
       await assert.rejects(rename(req.targetPath,`${req.targetPath}.replaced`))
       await assert.rejects(rename(parent,`${parent}.replaced`))
       await assert.rejects(writeFile(req.targetPath,Buffer.from('external mutation')))

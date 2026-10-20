@@ -1184,6 +1184,7 @@ ImportLegacyCheckpointV1RpcMethod::process(const RpcRequest& req,
   if (stringField(existing.get(), "status") != "absent")
     return existing;
   files = fileSpecs(d, c, target, true);
+  A2_LOG_DEBUG("Legacy checkpoint payload handles validated; awaiting commit");
   store->withTransaction([&]() {
     checkConflicts(e, gid, target, files);
     verifyFiles(files);
