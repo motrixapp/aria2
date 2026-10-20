@@ -2,11 +2,6 @@ name: ci
 
 on: [push, pull_request]
 
-# Push and PR events for the same branch verify the same candidate.
-concurrency:
-  group: ci-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
-
 jobs:
   build:
     strategy:
