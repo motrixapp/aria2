@@ -177,12 +177,19 @@ void checkPath(const std::string& p)
           part.find_first_of("\\:<>\"|?*") != std::string::npos)
         throw DL_ABORT_EX("Legacy checkpoint invalid Windows path component");
       auto stem = part.substr(0, part.find('.'));
+      while (!stem.empty() && stem.back() == ' ') stem.pop_back();
       for (auto& ch : stem) if (ch >= 'a' && ch <= 'z') ch -= 'a' - 'A';
       if (stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL" ||
           stem == "CONIN$" || stem == "CONOUT$" || stem == "CLOCK$" ||
           (stem.size() == 4 && (stem.compare(0, 3, "COM") == 0 ||
                                stem.compare(0, 3, "LPT") == 0) &&
-           stem[3] >= '0' && stem[3] <= '9'))
+           stem[3] >= '0' && stem[3] <= '9') ||
+          (stem.size() == 5 && (stem.compare(0, 3, "COM") == 0 ||
+                               stem.compare(0, 3, "LPT") == 0) &&
+           static_cast<unsigned char>(stem[3]) == 0xc2 &&
+           (static_cast<unsigned char>(stem[4]) == 0xb9 ||
+            static_cast<unsigned char>(stem[4]) == 0xb2 ||
+            static_cast<unsigned char>(stem[4]) == 0xb3)))
         throw DL_ABORT_EX("Legacy checkpoint reserved Windows path component");
 #endif
       start = i + 1;

@@ -16,7 +16,7 @@ const nativePath=p=>windows?p.replaceAll('\\','/'):p
 let windowsOwner
 async function writeFile(filename, ...args) {
   await fsWriteFile(filename, ...args)
-  if(windows)execFileSync('icacls.exe',[filename,'/setowner',`*${windowsOwner}`])
+  if(windows)execFileSync('icacls.exe',[path.toNamespacedPath(filename),'/setowner',`*${windowsOwner}`])
 }
 const secret='legacy-fixture-secret', payload=Buffer.alloc(98305,0x63)
 const previousBin=process.env.ARIA2_SCHEMA4_BIN || process.env.ARIA2_SCHEMA3_BIN
@@ -240,7 +240,7 @@ describe('legacy checkpoint engine import',()=>{
     const junction=`${root}/junction`;await symlink(e.dir,junction,'junction')
     const alias=`${junction}/safe.bin`
     for(const target of [alias,req.targetPath.toLowerCase(),`${req.targetPath}:stream`,
-      `${e.dir}/safe.bin.`,`${e.dir}/CON`,req.targetPath.replaceAll('/','\\')]) {
+      `${e.dir}/safe.bin.`,`${e.dir}/CON`,`${e.dir}/COM¹.txt`,`${e.dir}/CON .txt`,req.targetPath.replaceAll('/','\\')]) {
       await assert.rejects(e.rpc.call(importMethod,[{...req,targetPath:target,files:[{...req.files[0],path:target}]}]))
     }
     execFileSync('icacls.exe',[req.targetPath,'/setowner','*S-1-5-32-544'])
