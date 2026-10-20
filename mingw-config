@@ -37,7 +37,8 @@
 #
 # HOST: cross-compile to build programs to run on HOST. It defaults to
 #       i686-w64-mingw32. To build 64 bit binary, specify
-#       x86_64-w64-mingw32.
+#       x86_64-w64-mingw32. Windows ARM64 uses aarch64-w64-mingw32
+#       with LLVM-MinGW/UCRT on PATH.
 #
 # PREFIX: Prefix to the directory where dependent libraries are
 #       installed.  It defaults to /usr/local/$HOST. -I$PREFIX/include

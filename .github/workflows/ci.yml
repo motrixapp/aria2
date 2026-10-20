@@ -137,6 +137,7 @@ jobs:
         include:
         - { host: x86_64-w64-mingw32, asset_arch: x64 }
         - { host: i686-w64-mingw32,   asset_arch: ia32 }
+        - { host: aarch64-w64-mingw32, asset_arch: arm64 }
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Build release-equivalent OpenSSL binary
@@ -164,6 +165,9 @@ jobs:
         - { asset_arch: x64, runner: windows-2022, baseline_sha256: 579f17351e81c9fe3ed11d9700f5983235fc362beaf20f5f02820f7a1bfe49b0 }
         - { asset_arch: x64, runner: windows-2025, baseline_sha256: 579f17351e81c9fe3ed11d9700f5983235fc362beaf20f5f02820f7a1bfe49b0 }
         - { asset_arch: ia32, runner: windows-2025, baseline_sha256: 5fe63ed9f6b5b5271ac719a089a6663171f68466b046e38fa9b393af9d28210b }
+        # Schema 3 had no ARM64 build; migrate an x64 baseline database
+        # under Windows emulation into the native ARM64 candidate.
+        - { asset_arch: arm64, runner: windows-11-arm, baseline_arch: x64, baseline_sha256: 579f17351e81c9fe3ed11d9700f5983235fc362beaf20f5f02820f7a1bfe49b0 }
     runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -186,6 +190,26 @@ jobs:
           Format-List | Out-File "$resultDir/binary-sha256.txt"
         (& .\bin\aria2c.exe --version 2>&1 | Out-String) |
           Out-File "$resultDir/version.txt"
+    - name: Verify native PE architecture
+      shell: pwsh
+      run: scripts/ci/verify-windows-binary.ps1 -Architecture '${{ matrix.asset_arch }}'
+    - name: Verify OpenSSL backend and Windows trust store
+      shell: pwsh
+      run: |
+        $expectedOpenSSL = (Select-String -Path scripts/ci/deps.env -Pattern '^OPENSSL_VERSION=').Line.Split('=', 2)[1]
+        $versionOutput = (& .\bin\aria2c.exe --version 2>&1 | Out-String)
+        if ($LASTEXITCODE -ne 0) { throw "aria2c --version failed: $versionOutput" }
+        if ($versionOutput -notmatch [regex]::Escape("OpenSSL/$expectedOpenSSL") -or $versionOutput -match 'WinTLS') {
+          throw "Unexpected TLS backend: $versionOutput"
+        }
+        Remove-Item Env:SSL_CERT_FILE -ErrorAction SilentlyContinue
+        Remove-Item Env:SSL_CERT_DIR -ErrorAction SilentlyContinue
+        & .\bin\aria2c.exe --no-conf=true --dry-run=true --check-certificate=true --max-tries=2 --connect-timeout=30 --timeout=30 https://www.cloudflare.com/favicon.ico
+        if ($LASTEXITCODE -ne 0) { throw 'Windows trust store smoke failed' }
+    - name: Verify task cookies and credential redirects
+      env:
+        ARIA2_E2E_BIN: ${{ github.workspace }}\bin\aria2c.exe
+      run: node --test test/e2e/task-cookies.e2e.test.mjs
     - name: Verify destinations longer than MAX_PATH
       shell: pwsh
       env:
@@ -202,7 +226,7 @@ jobs:
     - name: Fetch checksum-pinned schema 3 baseline
       shell: pwsh
       run: |
-        Invoke-WebRequest -Uri 'https://github.com/motrixapp/aria2/releases/download/v1.37.0-motrix.16/aria2c-1.37.0-motrix.16-win32-${{ matrix.asset_arch }}.zip' -OutFile baseline.zip
+        Invoke-WebRequest -Uri 'https://github.com/motrixapp/aria2/releases/download/v1.37.0-motrix.16/aria2c-1.37.0-motrix.16-win32-${{ matrix.baseline_arch || matrix.asset_arch }}.zip' -OutFile baseline.zip
         if ((Get-FileHash baseline.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne '${{ matrix.baseline_sha256 }}') { throw 'Baseline checksum mismatch' }
         Expand-Archive baseline.zip baseline
         "ARIA2_SCHEMA3_BIN=$pwd\baseline\aria2c.exe" >> $env:GITHUB_ENV

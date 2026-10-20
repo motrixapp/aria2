@@ -1,0 +1,12 @@
+# LLVM-MinGW's compiler runtime is an absolute archive path. Libtool must
+# retain it when reconstructing the C++ link command with -nostdlib.
+# https://github.com/mstorsjo/llvm-mingw#known-issues
+# https://debbugs.gnu.org/cgi/bugreport.cgi?bug=27866
+--- libtool.m4
++++ libtool.m4
+@@ -1,4 +1,4 @@
+     case $prev$p in
+ 
+-    -L* | -R* | -l*)
++    -L* | -R* | -l* | */libclang_rt.*.a)
+        # Some compilers place space between "-{L,R}" and the path.

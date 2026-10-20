@@ -13,7 +13,7 @@ FROM ubuntu:22.04
 
 MAINTAINER Tatsuhiro Tsujikawa
 
-# Change HOST to x86_64-w64-mingw32 to build 64-bit binary
+# Use x86_64-w64-mingw32 for x64 or aarch64-w64-mingw32 for ARM64.
 ARG HOST=i686-w64-mingw32
 
 # It would be better to use nearest ubuntu archive mirror for faster
@@ -24,13 +24,35 @@ RUN apt-get update && \
     DEBIAN_FRONTEND="noninteractive" \
     apt-get install -y --no-install-recommends \
         make binutils autoconf automake autotools-dev libtool \
-        patch ca-certificates \
+        patch ca-certificates xz-utils \
         pkg-config git curl dpkg-dev gcc-mingw-w64 g++-mingw-w64 \
         autopoint libcppunit-dev libxml2-dev libgcrypt20-dev lzip \
         python3-docutils
 
 COPY scripts/ci/deps.env /deps.env
 COPY patches /patches
+COPY scripts/ci/openssl-mingw-arm64.conf /openssl-mingw-arm64.conf
+
+# LLVM-MinGW provides the Windows ARM64 UCRT toolchain missing from Ubuntu's
+# GCC MinGW packages. Select the build-machine archive, not the target arch,
+# so the same Dockerfile can run natively on Linux x64 and ARM64 hosts.
+RUN if [ "$HOST" = aarch64-w64-mingw32 ]; then \
+      . /deps.env && \
+      case "$(uname -m)" in \
+        x86_64) llvm_arch=x86_64; llvm_sha256=$LLVM_MINGW_X86_64_SHA256 ;; \
+        aarch64) llvm_arch=aarch64; llvm_sha256=$LLVM_MINGW_AARCH64_SHA256 ;; \
+        *) echo 'Unsupported LLVM-MinGW build machine' >&2; exit 1 ;; \
+      esac && \
+      curl -fL --retry 5 --retry-delay 3 --retry-all-errors \
+        --connect-timeout 30 --speed-limit 1 --speed-time 30 \
+        -o /llvm-mingw.tar.xz \
+        "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_VERSION/llvm-mingw-$LLVM_MINGW_VERSION-ucrt-ubuntu-22.04-$llvm_arch.tar.xz" && \
+      echo "$llvm_sha256  /llvm-mingw.tar.xz" | sha256sum -c - && \
+      mkdir /opt/llvm-mingw && \
+      tar xf /llvm-mingw.tar.xz -C /opt/llvm-mingw --strip-components=1 && \
+      rm /llvm-mingw.tar.xz; \
+    fi
+ENV PATH="/opt/llvm-mingw/bin:${PATH}"
 
 # fetch(): -f fails on HTTP errors (so a 404 errors here instead of saving an
 # error page that tar chokes on later); --retry + --speed-time abort/retry a
@@ -51,14 +73,18 @@ RUN . /deps.env && \
 
 RUN . /deps.env && tar xf gmp-$GMP_VERSION.tar.xz && \
     cd gmp-$GMP_VERSION && \
+    case "$HOST" in \
+      aarch64-w64-mingw32) gmp_arch_flags=--disable-assembly; gmp_cflags='-O2 -g0' ;; \
+      *) gmp_arch_flags=--enable-fat; gmp_cflags='-mtune=generic -O2 -g0' ;; \
+    esac && \
     ./configure \
         --disable-shared \
         --enable-static \
         --prefix=/usr/local/$HOST \
         --host=$HOST \
         --disable-cxx \
-        --enable-fat \
-        CFLAGS="-mtune=generic -O2 -g0" && \
+        $gmp_arch_flags \
+        CFLAGS="$gmp_cflags" && \
     make -j$(nproc) install
 
 RUN . /deps.env && tar xf expat-$EXPAT_VERSION.tar.bz2 && \
@@ -109,6 +135,8 @@ RUN . /deps.env && tar xf openssl-$OPENSSL_VERSION.tar.gz && \
     case "$HOST" in \
       x86_64-w64-mingw32) openssl_target=mingw64 ;; \
       i686-w64-mingw32) openssl_target=mingw ;; \
+      aarch64-w64-mingw32) openssl_target=mingw-arm64; \
+        cp /openssl-mingw-arm64.conf Configurations/99-mingw-arm64.conf ;; \
       *) echo "Unsupported MinGW host: $HOST" >&2; exit 1 ;; \
     esac && \
     ./Configure \
@@ -155,7 +183,9 @@ RUN . /deps.env && tar xf libssh2-$LIBSSH2_VERSION.tar.bz2 && \
 
 COPY . /aria2
 WORKDIR /aria2
-RUN autoreconf -fi
+RUN if [ "$HOST" = aarch64-w64-mingw32 ]; then \
+      patch /usr/share/aclocal/libtool.m4 /patches/libtool-clang-rt.patch; \
+    fi && autoreconf -fi
 
 # Release builds use OpenSSL. Declare this argument next to the only layer it
 # affects so WinTLS compatibility builds can reuse all dependency layers.
@@ -173,5 +203,7 @@ RUN TLS_BACKEND="$TLS_BACKEND" ./mingw-config && \
     esac && \
     make -j$(nproc) && \
     $HOST-strip src/aria2c.exe && \
-    ! $HOST-objdump -p src/aria2c.exe | grep -Eiq \
-        'DLL Name: .*\b(libssl|libcrypto)[^ ]*\.dll'
+    $HOST-objdump -p src/aria2c.exe > /aria2/windows-pe.txt && \
+    ! grep -Eiq \
+        'DLL Name: .*(libssl|libcrypto|libc\+\+|libunwind|libwinpthread|libstdc\+\+|libgcc)[^ ]*\.dll' \
+        /aria2/windows-pe.txt

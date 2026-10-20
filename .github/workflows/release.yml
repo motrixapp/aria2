@@ -7,7 +7,7 @@ on:
     inputs:
       version:
         description: 'Version for a dry run (no leading v)'
-        default: '1.37.0-motrix.17-dev'
+        default: '1.37.0-motrix.19-dev'
 
 permissions:
   contents: write
@@ -135,6 +135,7 @@ jobs:
         include:
         - { host: x86_64-w64-mingw32, asset_arch: x64 }
         - { host: i686-w64-mingw32,   asset_arch: ia32 }
+        - { host: aarch64-w64-mingw32, asset_arch: arm64 }
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Inject version into configure.ac
@@ -147,7 +148,6 @@ jobs:
         id=$(docker create aria2-mingw)
         docker cp "$id:/aria2/src/aria2c.exe" ./aria2c.exe
         docker rm "$id"
-        ${{ matrix.host }}-strip ./aria2c.exe || true
     - name: Package
       run: |
         V=${{ needs.version.outputs.version }}
@@ -166,6 +166,7 @@ jobs:
         - { asset_arch: x64, runner: windows-2022 }
         - { asset_arch: x64, runner: windows-2025 }
         - { asset_arch: ia32, runner: windows-2025 }
+        - { asset_arch: arm64, runner: windows-11-arm }
     runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -214,6 +215,9 @@ jobs:
             throw "HTTPS smoke failed for $url (exit $LASTEXITCODE)"
           }
         }
+    - name: Verify native PE architecture
+      shell: pwsh
+      run: scripts/ci/verify-windows-binary.ps1 -Architecture '${{ matrix.asset_arch }}'
     - name: Record candidate identity
       shell: pwsh
       run: |
@@ -362,6 +366,7 @@ jobs:
         - { asset: darwin-x64, runner: macos-26-intel }
         - { asset: win32-x64, runner: windows-2025 }
         - { asset: win32-ia32, runner: windows-2025 }
+        - { asset: win32-arm64, runner: windows-11-arm }
         - { asset: linux-x64, runner: ubuntu-24.04 }
         - { asset: linux-arm64, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.runner }}
@@ -409,6 +414,8 @@ jobs:
         - { asset: linux-arm64, runner: ubuntu-24.04-arm, baseline_sha256: 65511295a68fd3bcb002022c2a09364f46a8da6eb385d6c2c3915c5ea349692f }
         - { asset: win32-x64, runner: windows-2025, baseline_sha256: 579f17351e81c9fe3ed11d9700f5983235fc362beaf20f5f02820f7a1bfe49b0 }
         - { asset: win32-ia32, runner: windows-2025, baseline_sha256: 5fe63ed9f6b5b5271ac719a089a6663171f68466b046e38fa9b393af9d28210b }
+        # Exercise cross-architecture schema migration from the last x64 schema 3 release.
+        - { asset: win32-arm64, runner: windows-11-arm, baseline_asset: win32-x64, baseline_sha256: 579f17351e81c9fe3ed11d9700f5983235fc362beaf20f5f02820f7a1bfe49b0 }
     runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -460,7 +467,7 @@ jobs:
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
-        Invoke-WebRequest -Uri 'https://github.com/motrixapp/aria2/releases/download/v1.37.0-motrix.16/aria2c-1.37.0-motrix.16-${{ matrix.asset }}.zip' -OutFile baseline.zip
+        Invoke-WebRequest -Uri 'https://github.com/motrixapp/aria2/releases/download/v1.37.0-motrix.16/aria2c-1.37.0-motrix.16-${{ matrix.baseline_asset || matrix.asset }}.zip' -OutFile baseline.zip
         if ((Get-FileHash baseline.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne '${{ matrix.baseline_sha256 }}') { throw 'Baseline checksum mismatch' }
         Expand-Archive baseline.zip baseline
         "ARIA2_SCHEMA3_BIN=$pwd\baseline\aria2c.exe" >> $env:GITHUB_ENV
@@ -561,7 +568,8 @@ jobs:
           '- Persist paused BT recovery with the original GID, verified metadata and crash-safe SQLite transactions.' \
           '- Preserve a complete SQLite backup, including committed WAL pages, before upgrading an existing schema to 5.' \
           '- Gate macOS, Windows and Linux migration recovery against the release binaries and the Motrix application.' \
-          '- Windows verifies native legacy-progress import and crash recovery.' \
+          '- Add native Windows ARM64 binaries using LLVM-MinGW/UCRT and static OpenSSL.' \
+          '- Gate Windows ARM64 with native HTTPS, long-path, WebSocket, cookie and legacy-recovery checks.' \
           '- Retain task-scoped cookies, cross-origin credential isolation and long-path support.' \
           '' \
           'Compatibility:' \
