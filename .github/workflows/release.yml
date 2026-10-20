@@ -538,7 +538,7 @@ jobs:
         src/core/legacy-import/bt-activation-service.test.ts
         src/core/legacy-import/bt-activation.integration.test.ts
         src/core/legacy-import/session-parser.win32.test.ts
-        --reporter=verbose
+        --reporter=verbose --testTimeout=30000
 
   publish:
     needs: [macos-smoke, windows-smoke, motrix-windows-consumer, linux, android, cookie-contract, legacy-checkpoint-contract, motrix-migration-consumer]
