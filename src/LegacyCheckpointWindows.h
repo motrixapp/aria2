@@ -148,12 +148,14 @@ Handle openSafe(const std::string& path)
   std::vector<Handle> parents;
   // Retain every ancestor without write/delete sharing. A checked directory
   // cannot be renamed or converted to a reparse point while opening descendants.
+  // FILE_LIST_DIRECTORY participates in share accounting; attributes-only opens
+  // do not establish this read/write/delete exclusion.
   size_t end = 3;
   while (true) {
     bool final = end == wide.size();
     auto prefix = L"\\\\?\\" + wide.substr(0, end);
     Handle handle(CreateFileW(prefix.c_str(),
-        final ? (GENERIC_READ | READ_CONTROL) : FILE_READ_ATTRIBUTES,
+        final ? (GENERIC_READ | READ_CONTROL) : (FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES),
         FILE_SHARE_READ, nullptr, OPEN_EXISTING,
         FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr));
     BY_HANDLE_FILE_INFORMATION info;
