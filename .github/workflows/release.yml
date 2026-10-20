@@ -407,8 +407,8 @@ jobs:
         - { asset: darwin-x64, runner: macos-26-intel, baseline_sha256: c578852e975f94e8d2e163e696a4dfc81dec4457618219c09853d20d233900e0 }
         - { asset: linux-x64, runner: ubuntu-24.04, baseline_sha256: bd48c06cbf6bebc32e1b75c2abbdad5c0787800b16266147bd0bf5904ce16e94 }
         - { asset: linux-arm64, runner: ubuntu-24.04-arm, baseline_sha256: 65511295a68fd3bcb002022c2a09364f46a8da6eb385d6c2c3915c5ea349692f }
-        - { asset: win32-x64, runner: windows-2025 }
-        - { asset: win32-ia32, runner: windows-2025 }
+        - { asset: win32-x64, runner: windows-2025, baseline_sha256: 579f17351e81c9fe3ed11d9700f5983235fc362beaf20f5f02820f7a1bfe49b0 }
+        - { asset: win32-ia32, runner: windows-2025, baseline_sha256: 5fe63ed9f6b5b5271ac719a089a6663171f68466b046e38fa9b393af9d28210b }
     runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -456,23 +456,32 @@ jobs:
         PYTHON
         chmod +x baseline/aria2c
         echo "ARIA2_SCHEMA3_BIN=$GITHUB_WORKSPACE/baseline/aria2c" >> "$GITHUB_ENV"
+    - name: Fetch checksum-pinned Windows schema 3 baseline
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Invoke-WebRequest -Uri 'https://github.com/motrixapp/aria2/releases/download/v1.37.0-motrix.16/aria2c-1.37.0-motrix.16-${{ matrix.asset }}.zip' -OutFile baseline.zip
+        if ((Get-FileHash baseline.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne '${{ matrix.baseline_sha256 }}') { throw 'Baseline checksum mismatch' }
+        Expand-Archive baseline.zip baseline
+        "ARIA2_SCHEMA3_BIN=$pwd\baseline\aria2c.exe" >> $env:GITHUB_ENV
     - name: Verify native import, WAL upgrades, downgrade refusal and crash recovery
       run: node --test test/e2e/legacy-checkpoint-import.e2e.test.mjs
 
   motrix-migration-consumer:
-    needs: [macos, linux]
+    needs: [macos, linux, windows]
     strategy:
       fail-fast: false
       matrix:
         include:
         - { asset: darwin-arm64, runner: macos-26 }
         - { asset: linux-x64, runner: ubuntu-24.04 }
+        - { asset: win32-x64, runner: windows-2025 }
     runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         repository: agalwood/Motrix
-        ref: de9abc8166066823f11c83141a341a1045c0e416
+        ref: 15ee76945edb5bd162961c2c916d47e3457f4f62
         path: Motrix
     - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       with:
@@ -487,12 +496,20 @@ jobs:
       with:
         name: ${{ matrix.asset }}
         path: dist
-    - name: Extract candidate
+    - name: Extract POSIX migration candidate
+      if: runner.os != 'Windows'
       run: |
         mkdir bin
         tar -xzf dist/*.tar.gz -C bin
         chmod +x bin/aria2c
         echo "MOTRIX_LEGACY_CHECKPOINT_ENGINE=$GITHUB_WORKSPACE/bin/aria2c" >> "$GITHUB_ENV"
+    - name: Extract Windows migration candidate
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $archive = Get-ChildItem dist -Filter '*.zip' | Select-Object -First 1
+        Expand-Archive $archive.FullName bin
+        "MOTRIX_LEGACY_CHECKPOINT_ENGINE=$pwd\bin\aria2c.exe" >> $env:GITHUB_ENV
     - name: Install Motrix dependencies
       working-directory: Motrix
       env:
@@ -500,6 +517,7 @@ jobs:
         MOTRIX_SKIP_ENGINE_FETCH: '1'
       run: pnpm install --frozen-lockfile
     - name: Verify Motrix migration adapter and activation recovery
+      if: runner.os != 'Windows'
       working-directory: Motrix
       run: >-
         pnpm exec vitest run
@@ -508,6 +526,16 @@ jobs:
         src/core/engine/aria2/aria2-legacy-checkpoint.integration.test.ts
         src/core/engine/aria2/aria2-legacy-bt-policy.test.ts
         src/core/engine/aria2/aria2-sqlite-recovery.test.ts
+        --reporter=verbose
+
+    - name: Verify Motrix Windows activation and recovery
+      if: runner.os == 'Windows'
+      working-directory: Motrix
+      run: >-
+        pnpm exec vitest run
+        src/core/engine/aria2/aria2-legacy-path.test.ts
+        src/core/engine/aria2/aria2-legacy-checkpoint.integration.test.ts
+        src/core/legacy-import/bt-activation-service.test.ts
         --reporter=verbose
 
   publish:
@@ -530,7 +558,7 @@ jobs:
           '- Import native Motrix v1 .aria2 checkpoints with authenticated, idempotent RPCs.' \
           '- Persist paused BT recovery with the original GID, verified metadata and crash-safe SQLite transactions.' \
           '- Preserve a complete SQLite backup, including committed WAL pages, before upgrading an existing schema to 5.' \
-          '- Gate macOS and Linux migration recovery against the release binaries and the Motrix application.' \
+          '- Gate macOS, Windows and Linux migration recovery against the release binaries and the Motrix application.' \
           '- Windows verifies native legacy-progress import and crash recovery.' \
           '- Retain task-scoped cookies, cross-origin credential isolation and long-path support.' \
           '' \

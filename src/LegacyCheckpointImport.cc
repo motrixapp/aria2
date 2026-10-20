@@ -130,6 +130,18 @@ int64_t decimal(const Dict* d, const char* key)
   }
   return result;
 }
+void identityNumber(const Dict* d, const char* key)
+{
+  const auto& s = stringField(d, key);
+  if (s.empty() || s.size() > 20 || (s.size() > 1 && s[0] == '0'))
+    throw DL_ABORT_EX("Legacy checkpoint invalid identity number");
+  uint64_t value = 0;
+  for (auto c : s) {
+    if (c < '0' || c > '9' || value > (UINT64_MAX - (c - '0')) / 10)
+      throw DL_ABORT_EX("Legacy checkpoint identity number overflow");
+    value = value * 10 + c - '0';
+  }
+}
 void checkToken(const std::string& s)
 {
   if (s.size() < 16 || s.size() > 128)
@@ -363,9 +375,11 @@ std::vector<FileSpec> fileSpecs(const Dict* request, const LegacyCheckpoint& c,
     auto i = downcast<Dict>(d->get("identity"));
     if (!i || i->size() != 5)
       throw DL_ABORT_EX("Legacy checkpoint invalid file identity");
-    // Canonical, signed 64-bit decimal values throughout the wire contract.
-    for (auto key : {"device", "inode", "size", "mtimeNs", "ctimeNs"})
-      decimal(i, key);
+    // Native file IDs are unsigned (including NTFS sequence bits); lengths
+    // and Unix nanosecond timestamps retain the signed v1 numeric bound.
+    identityNumber(i, "device");
+    identityNumber(i, "inode");
+    for (auto key : {"size", "mtimeNs", "ctimeNs"}) decimal(i, key);
     Identity expected{stringField(i, "device"), stringField(i, "inode"),
                       stringField(i, "size"), stringField(i, "mtimeNs"),
                       stringField(i, "ctimeNs")};

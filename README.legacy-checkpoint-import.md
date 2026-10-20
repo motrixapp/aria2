@@ -44,7 +44,9 @@ these handles are not lifetime locks on the migrated task.
 ## Methods
 
 Every method takes one object after the existing `token:<rpc secret>` parameter.
-All numeric fields are canonical decimal strings within signed 64-bit range.
+Numeric fields are canonical decimal strings within signed 64-bit range, except
+`identity.device` and `identity.inode`, which accept unsigned 64-bit native IDs
+(the Windows v1 platform extension; all prior signed values remain valid).
 The method names and keys below are final for this version.
 
 `aria2.inspectLegacyCheckpointV1({controlFile})` accepts canonical base64 and
@@ -100,7 +102,8 @@ one file equal to that path. BT accepts files equal to the base path or beneath
 its directory; the file map covers the complete torrent logical length in
 order, including unselected files. Every file currently must exist, belong to
 the engine's effective user, have one hard link, and have no group/other write
-permission. File paths must be canonical absolute POSIX paths. Symlinks in any
+permission. On POSIX, file paths must be canonical absolute POSIX paths; Windows uses the
+platform contract above. Symlinks in any
 path component, traversal and aliased inode maps are refused. Canonicalize
 platform paths before requesting import (e.g. macOS `/tmp` to `/private/tmp`).
 Payloads may be shorter than their logical file lengths, but every checkpoint

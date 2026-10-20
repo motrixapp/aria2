@@ -179,7 +179,7 @@ async function durableBtRequest(e,name) {
       'seed-time':'0','seed-ratio':'0','rpc-save-upload-metadata':'false'}}}
 }
 
-async function dropActivationResponse(t,e,activation) {
+async function dropActivationResponse(t,e,activation,method='aria2.addLegacyTorrentV1') {
   // Forward the actual RPC, then close the client socket as soon as the
   // engine sends response headers. The caller sees transport failure even
   // though the engine has already met its durable-before-response contract.
@@ -196,8 +196,11 @@ async function dropActivationResponse(t,e,activation) {
   await new Promise(r=>proxy.listen(0,'127.0.0.1',r))
   t.after(async()=>{proxy.closeAllConnections();await new Promise(r=>proxy.close(r))})
   const client=new Aria2Rpc({port:proxy.address().port,secret})
-  await assert.rejects(client.call('aria2.addLegacyTorrentV1',[activation]),/fetch failed|socket|terminated/)
-  const actual=await acknowledged;assert.equal(actual.result,activation.options.gid,JSON.stringify(actual))
+  await assert.rejects(client.call(method,[activation]),/fetch failed|socket|terminated/)
+  const actual=await acknowledged
+  if(method==='aria2.addLegacyTorrentV1')assert.equal(actual.result,activation.options.gid,JSON.stringify(actual))
+  else assert.equal(actual.result?.status,'created',JSON.stringify(actual))
+  return actual.result
 }
 before(async()=>{
   root=nativePath(await realpath(await mkdtemp(path.join(tmpdir(),'aria2-legacy-import-'))))
@@ -249,6 +252,40 @@ describe('legacy checkpoint engine import',()=>{
     assert.equal(count(e,'task_progress'),0)
     assert.deepEqual(await readFile(req.targetPath),original)
   })
+  it('holds Windows payload and ancestor handles against replacement through commit',{skip:!windows},async t=>{
+    const e=await engine(t,`${root}/windows-race`,{extra:['--save-session-interval=0']})
+    const parent=`${e.dir}/payload`;await mkdir(parent)
+    const req=await request(e,'payload/safe')
+    const blocker=new DatabaseSync(`${e.dir}/session.db`)
+    blocker.exec('BEGIN IMMEDIATE')
+    const importing=e.rpc.call(importMethod,[req])
+    importing.catch(()=>{}) // Awaited below after releasing the deliberate DB lock.
+    // Hold the commit transaction busy after read-only validation. Observe the
+    // actual Windows sharing denial before attempting both replacement forms.
+    try {
+      await until(async()=>{
+        try { const writer=await open(req.targetPath,'r+');await writer.close();return false }
+        catch(error) { if(['EBUSY','EACCES','EPERM'].includes(error.code))return true;throw error }
+      },Boolean,3000)
+      await assert.rejects(rename(req.targetPath,`${req.targetPath}.replaced`))
+      await assert.rejects(rename(parent,`${parent}.replaced`))
+      await assert.rejects(writeFile(req.targetPath,Buffer.from('external mutation')))
+    } finally { blocker.exec('ROLLBACK');blocker.close() }
+    assert.equal((await importing).status,'created')
+    assert.deepEqual(await readFile(req.targetPath),payload)
+    assert.equal((await e.rpc.call(reconcile,[query(req)])).status,'created')
+  })
+  it('reconciles a lost import response after process termination without duplicating progress',async t=>{
+    const dir=`${root}/lost-import`;let e=await engine(t,dir)
+    const req=await request(e,'lost-import')
+    const result=await dropActivationResponse(t,e,req,importMethod)
+    await e.stop('SIGKILL');e=await engine(t,dir)
+    assert.deepEqual(await e.rpc.call(reconcile,[query(req)]),result)
+    assert.deepEqual(await e.rpc.call(importMethod,[req]),result)
+    assert.equal(count(e,'task_progress'),1)
+    assert.equal(count(e,'legacy_checkpoint_import'),1)
+    assert.deepEqual(await readFile(req.targetPath),payload)
+  })
   it('inspects native bitfields and partial blocks without database, file or network mutation',async t=>{
     const e=await engine(t,`${root}/inspect`);const bytes=control(),originalRequests=requests.length
     const result=await e.rpc.call(inspect,[{controlFile:bytes.toString('base64')}])
@@ -291,6 +328,8 @@ describe('legacy checkpoint engine import',()=>{
       {...req,files:[{...req.files[0],identity:{...req.files[0].identity,size:'900719925474099999999'}}]},
       {...req,expected:{...req.expected,totalLength:'98306'}}]
     for(const bad of variants)await assert.rejects(e.rpc.call(importMethod,[bad]))
+    await assert.rejects(e.rpc.call(importMethod,[{...req,files:[{...req.files[0],identity:{...req.files[0].identity,inode:'18446744073709551616'}}]}]),/overflow/)
+    await assert.rejects(e.rpc.call(importMethod,[{...req,files:[{...req.files[0],identity:{...req.files[0].identity,inode:'18446744073709551615'}}]}]),/identity changed/)
     const sym=`${e.dir}/alias.bin`;await symlink(req.targetPath,sym);await assert.rejects(e.rpc.call(importMethod,[{...req,targetPath:sym,files:[{...req.files[0],path:sym}]}]),/safe path/)
     await link(req.targetPath,`${e.dir}/hard.bin`);await assert.rejects(e.rpc.call(importMethod,[req]),/exclusively owned/);await rm(`${e.dir}/hard.bin`)
     if(windows)execFileSync('icacls.exe',[req.targetPath,'/grant','*S-1-1-0:W'])
