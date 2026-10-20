@@ -1,6 +1,7 @@
 #include "common.h"
 
 #include <iostream>
+#include <csignal>
 
 #include <cppunit/CompilerOutputter.h>
 #include <cppunit/extensions/TestFactoryRegistry.h>
@@ -17,6 +18,14 @@ int main(int argc, char* argv[])
 {
   aria2::global::initConsole(false);
   aria2::Platform platform;
+
+#ifdef SIGPIPE
+  // Match MultiUrlRequestInfo::setupSignalHandlers: a peer closing during a
+  // TLS write must reach the retry/error assertion, not terminate the runner.
+  if (std::signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
+    return 1;
+  }
+#endif
 
 #ifdef ENABLE_NLS
   // Set locale to C to prevent the messages to be localized.
