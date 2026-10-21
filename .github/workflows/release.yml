@@ -256,7 +256,13 @@ jobs:
 
   motrix-windows-consumer:
     needs: windows
-    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { asset_arch: x64, runner: windows-2025 }
+        - { asset_arch: arm64, runner: windows-11-arm }
+    runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
@@ -270,11 +276,12 @@ jobs:
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: 24
+        architecture: ${{ matrix.asset_arch }}
         cache: pnpm
         cache-dependency-path: Motrix/pnpm-lock.yaml
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
-        name: win32-x64
+        name: win32-${{ matrix.asset_arch }}
         path: dist
     - name: Inject candidate engine
       shell: pwsh
@@ -282,7 +289,7 @@ jobs:
         $archive = Get-ChildItem -Path dist -Filter '*.zip' | Select-Object -First 1
         if (-not $archive) { throw 'Windows aria2 archive was not downloaded' }
         Expand-Archive -LiteralPath $archive.FullName -DestinationPath engine
-        $targetDir = 'Motrix/extra/win32/x64'
+        $targetDir = 'Motrix/extra/win32/${{ matrix.asset_arch }}'
         New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
         Copy-Item .\engine\aria2c.exe "$targetDir/aria2c.exe"
     - name: Install Motrix dependencies
@@ -483,6 +490,7 @@ jobs:
         - { asset: darwin-arm64, runner: macos-26 }
         - { asset: linux-x64, runner: ubuntu-24.04 }
         - { asset: win32-x64, runner: windows-2025 }
+        - { asset: win32-arm64, runner: windows-11-arm }
     runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
