@@ -1,9 +1,18 @@
 aria2 Windows build
 ===================
 
-aria2 Windows build is provided in 2 flavors: 32bit version and 64bit
-version. The executable was compiled using mingw-w64 cross compiler on
-Ubuntu Linux.
+aria2 Windows builds are provided for x64, ia32 and ARM64. The x64 and ia32
+executables use the GCC mingw-w64 cross compiler; ARM64 uses the checksum-pinned
+LLVM-MinGW UCRT toolchain. All three are cross-compiled on Ubuntu Linux.
+
+The ARM64 release asset is named ``aria2c-<version>-win32-arm64.zip`` and runs
+natively on Windows on Arm. Release CI validates it on Windows 11 ARM64,
+including HTTPS trust, long paths, WebSocket RPC, cookies and legacy recovery.
+
+To build the ARM64 executable locally::
+
+  docker build -f Dockerfile.mingw --build-arg HOST=aarch64-w64-mingw32 -t aria2-mingw-arm64 .
+  docker run --rm -v "$PWD:/out" aria2-mingw-arm64 cp /aria2/src/aria2c.exe /out
 
 The executable is statically linked, so no extra DLLs are
 necessary. The linked libraries are:
@@ -13,7 +22,7 @@ necessary. The linked libraries are:
 * sqlite 3.53.4
 * zlib 1.3.2
 * c-ares 1.34.8
-* OpenSSL 3.5.7
+* OpenSSL 3.5.8
 * libssh2 1.11.1
 
 OpenSSL 3.2 and later use the Windows system ``ROOT`` certificate
