@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "FtpConnection.h"
 
+#include <iterator>
 #include <array>
 #include <cstring>
 #include <cstdio>

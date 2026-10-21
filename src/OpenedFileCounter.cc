@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "OpenedFileCounter.h"
 
+#include <iterator>
 #include <cassert>
 
 #include "RequestGroupMan.h"

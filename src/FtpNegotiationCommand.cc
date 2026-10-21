@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "FtpNegotiationCommand.h"
 
+#include <iterator>
 #include <stdint.h>
 #include <cassert>
 #include <utility>

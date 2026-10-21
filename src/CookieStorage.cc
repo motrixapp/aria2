@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "CookieStorage.h"
 
+#include <iterator>
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
