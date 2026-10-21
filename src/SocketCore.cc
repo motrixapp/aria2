@@ -38,6 +38,7 @@
 #  include <iphlpapi.h>
 #endif // HAVE_IPHLPAPI_H
 
+#include <iterator>
 #include <unistd.h>
 #ifdef HAVE_IFADDRS_H
 #  include <ifaddrs.h>

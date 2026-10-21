@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "HttpRequest.h"
 
+#include <iterator>
 #include <cassert>
 #include <numeric>
 #include <vector>

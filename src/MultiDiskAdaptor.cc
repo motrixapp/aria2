@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "MultiDiskAdaptor.h"
 
+#include <iterator>
 #include <cassert>
 #include <algorithm>
 #include <map>

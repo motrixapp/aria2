@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "aria2api.h"
 
+#include <iterator>
 #include <functional>
 
 #include "Platform.h"

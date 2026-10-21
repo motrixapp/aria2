@@ -37,6 +37,7 @@
 
 #include "common.h"
 
+#include <iterator>
 #include <deque>
 #include <unordered_map>
 #include <vector>

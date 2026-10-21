@@ -35,6 +35,7 @@
 /* copyright --> */
 #include "AdaptiveURISelector.h"
 
+#include <iterator>
 #include <cstdlib>
 #include <cmath>
 #include <algorithm>

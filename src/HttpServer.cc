@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "HttpServer.h"
 
+#include <iterator>
 #include <sstream>
 
 #include "HttpHeader.h"

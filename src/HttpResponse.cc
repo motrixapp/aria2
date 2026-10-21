@@ -34,6 +34,8 @@
 /* copyright --> */
 
 #include "HttpResponse.h"
+
+#include <iterator>
 #include "Request.h"
 #include "Segment.h"
 #include "HttpRequest.h"

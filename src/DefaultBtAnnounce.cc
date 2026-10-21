@@ -33,6 +33,8 @@
  */
 /* copyright --> */
 #include "DefaultBtAnnounce.h"
+
+#include <iterator>
 #include "LogFactory.h"
 #include "Logger.h"
 #include "util.h"

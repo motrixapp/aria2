@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "BitfieldMan.h"
 
+#include <iterator>
 #include <cassert>
 #include <cstring>
 

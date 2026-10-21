@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "DefaultBtMessageDispatcher.h"
 
+#include <iterator>
 #include <algorithm>
 
 #include "prefs.h"

@@ -33,6 +33,8 @@
  */
 /* copyright --> */
 #include "HttpHeader.h"
+
+#include <iterator>
 #include "Range.h"
 #include "util.h"
 #include "A2STR.h"

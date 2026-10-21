@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "OptionParser.h"
 
+#include <iterator>
 #include <unistd.h>
 #include <getopt.h>
 

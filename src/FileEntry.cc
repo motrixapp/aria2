@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "FileEntry.h"
 
+#include <iterator>
 #include <cassert>
 #include <algorithm>
 

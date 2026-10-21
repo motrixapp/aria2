@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "DefaultPieceStorage.h"
 
+#include <iterator>
 #include <numeric>
 #include <algorithm>
 

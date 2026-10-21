@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "Metalink2RequestGroup.h"
 
+#include <iterator>
 #include <algorithm>
 
 #include "RequestGroup.h"

@@ -33,6 +33,8 @@
  */
 /* copyright --> */
 #include "UTPexExtensionMessage.h"
+
+#include <iterator>
 #include "Peer.h"
 #include "util.h"
 #include "bittorrent_helper.h"

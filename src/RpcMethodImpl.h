@@ -37,6 +37,7 @@
 
 #include "RpcMethod.h"
 
+#include <iterator>
 #include <cassert>
 #include <deque>
 #include <algorithm>

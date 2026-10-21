@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "cookie_helper.h"
 
+#include <iterator>
 #include <cstring>
 #include <vector>
 #include <limits>

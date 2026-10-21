@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "DefaultBtRequestFactory.h"
 
+#include <iterator>
 #include <algorithm>
 
 #include "LogFactory.h"

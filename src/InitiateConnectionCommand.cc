@@ -33,6 +33,8 @@
  */
 /* copyright --> */
 #include "InitiateConnectionCommand.h"
+
+#include <iterator>
 #include "Request.h"
 #include "DownloadEngine.h"
 #include "Option.h"

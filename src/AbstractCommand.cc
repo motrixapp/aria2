@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "AbstractCommand.h"
 
+#include <iterator>
 #include <algorithm>
 
 #include "Request.h"

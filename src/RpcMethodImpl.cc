@@ -38,6 +38,7 @@
 #include "RpcCookie.h"
 #include "LegacyCheckpointImport.h"
 
+#include <iterator>
 #include <cassert>
 #include <algorithm>
 #include <climits>

@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "json.h"
 
+#include <iterator>
 #include <sstream>
 
 #include "array_fun.h"

@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "UriListParser.h"
 
+#include <iterator>
 #include <cstring>
 #include <sstream>
 

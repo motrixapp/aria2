@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "MetalinkParserController.h"
 
+#include <iterator>
 #include <algorithm>
 
 #include "Metalinker.h"

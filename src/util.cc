@@ -48,6 +48,7 @@
 #  endif // HAVE_SIGNAL_H
 #endif   // !__sun
 
+#include <iterator>
 #include <sys/types.h>
 #ifdef HAVE_PWD_H
 #  include <pwd.h>

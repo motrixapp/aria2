@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "Netrc.h"
 
+#include <iterator>
 #include <cstdio>
 #include <cstring>
 #include <algorithm>

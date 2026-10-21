@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "File.h"
 
+#include <iterator>
 #include <stdlib.h>
 #include <sys/types.h>
 #ifdef HAVE_UTIME_H

@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "RequestGroupMan.h"
 
+#include <iterator>
 #include <unistd.h>
 #include <cstring>
 #include <iomanip>

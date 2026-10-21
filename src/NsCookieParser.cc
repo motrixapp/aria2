@@ -34,6 +34,7 @@
 /* copyright --> */
 #include "NsCookieParser.h"
 
+#include <iterator>
 #include <cstdio>
 #include <cstring>
 #include <limits>

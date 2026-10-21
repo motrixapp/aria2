@@ -33,6 +33,8 @@
  */
 /* copyright --> */
 #include "ReceiverMSEHandshakeCommand.h"
+
+#include <iterator>
 #include "PeerReceiveHandshakeCommand.h"
 #include "PeerConnection.h"
 #include "DownloadEngine.h"

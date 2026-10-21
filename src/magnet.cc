@@ -33,6 +33,8 @@
  */
 /* copyright --> */
 #include "magnet.h"
+
+#include <iterator>
 #include "util.h"
 #include "array_fun.h"
 
