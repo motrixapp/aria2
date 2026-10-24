@@ -163,7 +163,11 @@ ares_socket_t AsyncNameResolver::getFds(fd_set* rfdsPtr, fd_set* wfdsPtr) const
 
 void AsyncNameResolver::process(fd_set* rfdsPtr, fd_set* wfdsPtr)
 {
-  for (const auto& ent : socks_) {
+  // c-ares can synchronously add or remove sockets through sock_state_cb
+  // while processing an event. Keep the readiness snapshot stable.
+  const auto sockets = socks_;
+  bool processed = false;
+  for (const auto& ent : sockets) {
     ares_socket_t readfd = ARES_SOCKET_BAD;
     ares_socket_t writefd = ARES_SOCKET_BAD;
 
@@ -177,7 +181,13 @@ void AsyncNameResolver::process(fd_set* rfdsPtr, fd_set* wfdsPtr)
 
     if (readfd != ARES_SOCKET_BAD || writefd != ARES_SOCKET_BAD) {
       process(readfd, writefd);
+      processed = true;
     }
+  }
+  if (!processed) {
+    // A lost DNS packet produces no socket readiness. c-ares must still
+    // advance its timers to retransmit, try another server, or report failure.
+    process(ARES_SOCKET_BAD, ARES_SOCKET_BAD);
   }
 }
 

@@ -7,7 +7,7 @@ on:
     inputs:
       version:
         description: 'Version for a dry run (no leading v)'
-        default: '1.37.0-motrix.19-dev'
+        default: '1.37.0-motrix.21-dev'
 
 permissions:
   contents: write
@@ -218,6 +218,10 @@ jobs:
     - name: Verify native PE architecture
       shell: pwsh
       run: scripts/ci/verify-windows-binary.ps1 -Architecture '${{ matrix.asset_arch }}'
+    - name: Verify select DNS retransmission, failover and exhaustion
+      env:
+        ARIA2_E2E_BIN: ${{ github.workspace }}\bin\aria2c.exe
+      run: node --test test/e2e/select-dns.e2e.test.mjs
     - name: Record candidate identity
       shell: pwsh
       run: |
@@ -574,6 +578,8 @@ jobs:
           'aria2 fork build for Motrix. Base: upstream 1.37.0.' \
           '' \
           'Highlights:' \
+          '- Restore select-loop DNS retransmission, server failover and timeout reporting without changing DNS defaults.' \
+          '- Verify DNS packet loss and unreachable servers on Windows x64, ia32 and ARM64 release binaries.' \
           '- Import native Motrix v1 .aria2 checkpoints with authenticated, idempotent RPCs.' \
           '- Persist paused BT recovery with the original GID, verified metadata and crash-safe SQLite transactions.' \
           '- Preserve a complete SQLite backup, including committed WAL pages, before upgrading an existing schema to 5.' \
