@@ -42,6 +42,7 @@
 #include "help_tags.h"
 #include "a2functional.h"
 #include "File.h"
+#include "Request.h"
 
 namespace aria2 {
 
@@ -890,6 +891,17 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
     op->addTag(TAG_FTP);
     op->addTag(TAG_HTTP);
     op->setInitialOption(true);
+    op->setChangeGlobalOption(true);
+    op->setChangeOptionForReserved(true);
+    handlers.push_back(op);
+  }
+  {
+    OptionHandler* op(new NumberOptionHandler(
+        PREF_MAX_HTTP_REDIRECT, TEXT_MAX_HTTP_REDIRECT,
+        util::itos(Request::MAX_REDIRECT), 0, Request::MAX_REDIRECT));
+    op->addTag(TAG_HTTP);
+    op->setInitialOption(true);
+    op->setChangeOption(true);
     op->setChangeGlobalOption(true);
     op->setChangeOptionForReserved(true);
     handlers.push_back(op);

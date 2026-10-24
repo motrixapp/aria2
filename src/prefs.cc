@@ -168,6 +168,8 @@ PrefPtr PREF_DNS_TIMEOUT = makePref("dns-timeout");
 PrefPtr PREF_CONNECT_TIMEOUT = makePref("connect-timeout");
 // values: 1*digit
 PrefPtr PREF_MAX_TRIES = makePref("max-tries");
+// values: 0-20
+PrefPtr PREF_MAX_HTTP_REDIRECT = makePref("max-http-redirect");
 // values: 1*digit
 PrefPtr PREF_AUTO_SAVE_INTERVAL = makePref("auto-save-interval");
 // values: a string that your file system recognizes as a file name.

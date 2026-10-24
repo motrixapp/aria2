@@ -125,6 +125,8 @@ extern PrefPtr PREF_DNS_TIMEOUT;
 extern PrefPtr PREF_CONNECT_TIMEOUT;
 // values: 1*digit
 extern PrefPtr PREF_MAX_TRIES;
+// values: 0-20
+extern PrefPtr PREF_MAX_HTTP_REDIRECT;
 // values: 1*digit
 extern PrefPtr PREF_AUTO_SAVE_INTERVAL;
 // values: a string that your file system recognizes as a file name.

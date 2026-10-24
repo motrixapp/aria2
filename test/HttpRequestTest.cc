@@ -31,6 +31,7 @@ class HttpRequestTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testCreateRequest_query);
   CPPUNIT_TEST(testCreateRequest_head);
   CPPUNIT_TEST(testCreateRequest_ipv6LiteralAddr);
+  CPPUNIT_TEST(testCreateRequest_hostAuthority);
   CPPUNIT_TEST(testCreateRequest_endOffsetOverride);
   CPPUNIT_TEST(testCreateRequest_wantDigest);
   CPPUNIT_TEST(testCreateProxyRequest);
@@ -64,6 +65,7 @@ public:
   void testCreateRequest_query();
   void testCreateRequest_head();
   void testCreateRequest_ipv6LiteralAddr();
+  void testCreateRequest_hostAuthority();
   void testCreateRequest_endOffsetOverride();
   void testCreateRequest_wantDigest();
   void testCreateProxyRequest();
@@ -965,6 +967,53 @@ void HttpRequestTest::testCreateRequest_ipv6LiteralAddr()
   std::string proxyRequest = httpRequest.createProxyRequest();
   CPPUNIT_ASSERT(proxyRequest.find("Host: [::1]:80") != std::string::npos);
   CPPUNIT_ASSERT(proxyRequest.find("CONNECT [::1]:80 ") != std::string::npos);
+}
+
+void HttpRequestTest::testCreateRequest_hostAuthority()
+{
+  struct TestCase {
+    const char* uri;
+    const char* host;
+    const char* connectHost;
+  };
+  const TestCase cases[] = {
+      {"http://example.org/path", "example.org", "example.org:80"},
+      {"http://example.org:80/path", "example.org", "example.org:80"},
+      {"http://example.org:443/path", "example.org:443", "example.org:443"},
+      {"https://example.org/path", "example.org", "example.org:443"},
+      {"https://example.org:443/path", "example.org", "example.org:443"},
+      {"https://example.org:80/path", "example.org:80", "example.org:80"},
+      {"http://[::1]:80/path", "[::1]", "[::1]:80"},
+      {"http://[::1]:443/path", "[::1]:443", "[::1]:443"},
+      {"https://[::1]:443/path", "[::1]", "[::1]:443"},
+      {"https://[::1]:80/path", "[::1]:80", "[::1]:80"},
+  };
+  auto proxy = std::make_shared<Request>();
+  CPPUNIT_ASSERT(proxy->setUri("http://proxy.example:8080"));
+  for (const auto& test : cases) {
+    auto request = std::make_shared<Request>();
+    CPPUNIT_ASSERT(request->setUri(test.uri));
+    HttpRequest httpRequest;
+    httpRequest.setRequest(request);
+    httpRequest.setAuthConfigFactory(authConfigFactory_.get());
+    httpRequest.setOption(option_.get());
+
+    const auto expectedHost = std::string("\r\nHost: ") + test.host + "\r\n";
+    CPPUNIT_ASSERT_MESSAGE(
+        test.uri,
+        httpRequest.createRequest().find(expectedHost) != std::string::npos);
+    httpRequest.setProxyRequest(proxy);
+    CPPUNIT_ASSERT_MESSAGE(
+        test.uri,
+        httpRequest.createRequest().find(expectedHost) != std::string::npos);
+
+    // CONNECT uses authority-form and must always include the target port.
+    const auto connect = httpRequest.createProxyRequest();
+    CPPUNIT_ASSERT(connect.find(std::string("CONNECT ") + test.connectHost +
+                                " HTTP/1.1\r\n") == 0);
+    CPPUNIT_ASSERT(connect.find(std::string("\r\nHost: ") + test.connectHost +
+                                "\r\n") != std::string::npos);
+  }
 }
 
 void HttpRequestTest::testConditionalRequest()

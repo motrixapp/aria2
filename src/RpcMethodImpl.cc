@@ -1394,6 +1394,8 @@ std::unique_ptr<ValueBase> GetVersionRpcMethod::process(const RpcRequest& req,
       featureList->append(name);
     }
   }
+  // Built with the per-task redirect check in HttpSkipResponseCommand.
+  featureList->append("HttpRedirectPolicyV1");
   if (legacyCheckpointImportAvailable(e)) {
     featureList->append("LegacyCheckpointImportV1");
   }

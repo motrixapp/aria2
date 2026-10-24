@@ -66,6 +66,9 @@
     "                              HTTP server returns 503 response.")
 #define TEXT_TIMEOUT                                            \
   _(" -t, --timeout=SEC            Set timeout in seconds.")
+#define TEXT_MAX_HTTP_REDIRECT                                         \
+  _(" --max-http-redirect=NUM      Limit HTTP redirects to NUM (0-20).\n" \
+    "                              0 rejects every HTTP redirect. Default: 20.")
 #define TEXT_MAX_TRIES                                                  \
   _(" -m, --max-tries=N            Set number of tries. 0 means unlimited.")
 #define TEXT_HTTP_PROXY                                                 \

@@ -193,7 +193,10 @@ bool HttpSkipResponseCommand::processResponse()
   if (httpResponse_->isRedirect()) {
     int rnum =
         httpResponse_->getHttpRequest()->getRequest()->getRedirectCount();
-    if (rnum >= Request::MAX_REDIRECT) {
+    // Check before processRedirect changes the request URI. Entity tags are
+    // scoped to their resource, so callers can forbid any target change.
+    const auto maxRedirect = getOption()->getAsInt(PREF_MAX_HTTP_REDIRECT);
+    if (rnum >= maxRedirect || rnum >= Request::MAX_REDIRECT) {
       throw DL_ABORT_EX2(fmt("Too many redirects: count=%u", rnum),
                          error_code::HTTP_TOO_MANY_REDIRECTS);
     }

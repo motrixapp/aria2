@@ -706,6 +706,7 @@ void RpcMethodTest::testChangeOption()
   req.params->append(GroupId::toHex(group->getGID()));
   auto opt = Dict::g();
   opt->put(PREF_MAX_DOWNLOAD_LIMIT->k, "100K");
+  opt->put(PREF_MAX_HTTP_REDIRECT->k, "0");
 #ifdef ENABLE_BITTORRENT
   opt->put(PREF_BT_MAX_PEERS->k, "100");
   opt->put(PREF_BT_REQUEST_PEER_SPEED_LIMIT->k, "300K");
@@ -724,6 +725,7 @@ void RpcMethodTest::testChangeOption()
 
   CPPUNIT_ASSERT_EQUAL(0, res.code);
   CPPUNIT_ASSERT_EQUAL((int)100_k, group->getMaxDownloadSpeedLimit());
+  CPPUNIT_ASSERT_EQUAL(std::string("0"), option->get(PREF_MAX_HTTP_REDIRECT));
   CPPUNIT_ASSERT_EQUAL(std::string("102400"),
                        option->get(PREF_MAX_DOWNLOAD_LIMIT));
 #ifdef ENABLE_BITTORRENT
@@ -1020,7 +1022,7 @@ void RpcMethodTest::testGetVersion()
     features += s->s();
     features += ", ";
   }
-  CPPUNIT_ASSERT_EQUAL(featureSummary() + ", ", features);
+  CPPUNIT_ASSERT_EQUAL(featureSummary() + ", HttpRedirectPolicyV1, ", features);
 }
 
 void RpcMethodTest::testGatherStoppedDownload()

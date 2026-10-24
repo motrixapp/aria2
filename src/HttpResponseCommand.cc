@@ -237,7 +237,11 @@ bool HttpResponseCommand::executeInternal()
 
   if (!getPieceStorage()) {
     // Metalink/HTTP
-    if (ctx->getAcceptMetalink()) {
+    // A zero redirect budget pins this request to its supplied resource.
+    // HTTP Link mirrors would otherwise survive a rejected Location and
+    // become retry candidates with an unrelated resource-scoped entity tag.
+    if (ctx->getAcceptMetalink() &&
+        getOption()->getAsInt(PREF_MAX_HTTP_REDIRECT) > 0) {
       if (httpHeader->defined(HttpHeader::LINK)) {
         ctx->setAcceptMetalink(false);
         std::vector<MetalinkHttpEntry> entries;

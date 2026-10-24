@@ -149,10 +149,12 @@ std::string getHeaderValue(const std::string& hd, size_t fieldNameSize)
   return std::string(valueBegin, std::end(hd));
 }
 
-std::string getHostText(const std::string& host, uint16_t port)
+std::string getHostText(const std::string& host, uint16_t port,
+                        const std::string& protocol)
 {
   auto hosttext = host;
-  if (!(port == 80 || port == 443)) {
+  if (!((protocol == "http" && port == 80) ||
+        (protocol == "https" && port == 443))) {
     hosttext += ':';
     hosttext += util::uitos(port);
   }
@@ -217,7 +219,8 @@ std::string HttpRequest::createRequest()
     }
   }
   builtinHds.emplace_back("Accept:", acceptTypes);
-  builtinHds.emplace_back("Host:", getHostText(getURIHost(), getPort()));
+  builtinHds.emplace_back("Host:",
+                          getHostText(getURIHost(), getPort(), getProtocol()));
   auto userAgentHeader = std::find_if(
       std::begin(requestHeaders), std::end(requestHeaders),
       [](const std::string& hd) { return util::istartsWith(hd, "User-Agent:"); });

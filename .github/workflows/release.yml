@@ -480,6 +480,8 @@ jobs:
         "ARIA2_SCHEMA3_BIN=$pwd\baseline\aria2c.exe" >> $env:GITHUB_ENV
     - name: Verify native import, WAL upgrades, downgrade refusal and crash recovery
       run: node --test test/e2e/legacy-checkpoint-import.e2e.test.mjs
+    - name: Verify native HTTP redirect policy
+      run: node --test test/e2e/http-redirect-policy.e2e.test.mjs
 
   motrix-migration-consumer:
     needs: [macos, linux, windows]

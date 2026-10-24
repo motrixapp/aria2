@@ -28,6 +28,7 @@ class OptionParserTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testParseArg);
   CPPUNIT_TEST(testParse);
   CPPUNIT_TEST(testParseKeyVals);
+  CPPUNIT_TEST(testMaxHttpRedirect);
   CPPUNIT_TEST_SUITE_END();
 
 private:
@@ -76,6 +77,7 @@ public:
   void testParseArg();
   void testParse();
   void testParseKeyVals();
+  void testMaxHttpRedirect();
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION(OptionParserTest);
@@ -134,6 +136,28 @@ void OptionParserTest::testFindById()
   CPPUNIT_ASSERT_EQUAL(std::string("timeout"), std::string(timeout->getName()));
 
   CPPUNIT_ASSERT(!oparser_->findById(9999));
+}
+
+void OptionParserTest::testMaxHttpRedirect()
+{
+  const auto parser = OptionParser::getInstance();
+  const auto handler = parser->find(PREF_MAX_HTTP_REDIRECT);
+  CPPUNIT_ASSERT(handler);
+  CPPUNIT_ASSERT(handler->getInitialOption());
+  CPPUNIT_ASSERT(handler->getChangeOption());
+  CPPUNIT_ASSERT(handler->getChangeOptionForReserved());
+  CPPUNIT_ASSERT(handler->getChangeGlobalOption());
+
+  Option option;
+  parser->parseDefaultValues(option);
+  CPPUNIT_ASSERT_EQUAL(std::string("20"), option.get(PREF_MAX_HTTP_REDIRECT));
+  handler->parse(option, "0");
+  CPPUNIT_ASSERT_EQUAL(0, option.getAsInt(PREF_MAX_HTTP_REDIRECT));
+  handler->parse(option, "20");
+  CPPUNIT_ASSERT_EQUAL(20, option.getAsInt(PREF_MAX_HTTP_REDIRECT));
+  CPPUNIT_ASSERT_THROW(handler->parse(option, "-1"), Exception);
+  CPPUNIT_ASSERT_THROW(handler->parse(option, "21"), Exception);
+  CPPUNIT_ASSERT_THROW(handler->parse(option, "1.5"), Exception);
 }
 
 void OptionParserTest::testParseDefaultValues()

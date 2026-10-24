@@ -197,6 +197,17 @@ HTTP/FTP/SFTP Options
 
   Default: ``0``
 
+.. option:: --max-http-redirect=<NUM>
+
+  Limit redirects for each HTTP request chain. ``0`` rejects the first
+  redirect before requesting its target, with error code ``23``, and disables
+  admission of HTTP ``Link`` mirrors so they cannot bypass this restriction.
+  Possible Values: ``0``-``20``. Default: ``20``.
+  This option can be set per download, changed through :func:`aria2.changeOption`,
+  inspected with :func:`aria2.getOption`, and retained in saved sessions.
+  Live RPC clients can require the ``HttpRedirectPolicyV1`` feature reported
+  by :func:`aria2.getVersion` before relying on this policy.
+
 .. option:: -m, --max-tries=<N>
 
   Set number of tries. ``0`` means unlimited.
@@ -2226,6 +2237,7 @@ of URIs. These optional lines must start with white space(s).
   * :option:`max-connection-per-server <-x>`
   * :option:`max-download-limit <--max-download-limit>`
   * :option:`max-file-not-found <--max-file-not-found>`
+  * :option:`max-http-redirect <--max-http-redirect>`
   * :option:`max-mmap-limit <--max-mmap-limit>`
   * :option:`max-resume-failure-tries <--max-resume-failure-tries>`
   * :option:`max-tries <-m>`
@@ -3335,6 +3347,7 @@ For information on the *secret* parameter, see :ref:`rpc_auth`.
   * :option:`bt-remove-unselected-file <--bt-remove-unselected-file>`
   * :option:`force-save <--force-save>`
   * :option:`max-download-limit <--max-download-limit>`
+  * :option:`max-http-redirect <--max-http-redirect>`
   * :option:`max-upload-limit <-u>`
 
   This method returns ``OK`` for success.
