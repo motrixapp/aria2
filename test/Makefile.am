@@ -82,6 +82,7 @@ aria2c_SOURCES = AllTest.cc\
 	RpcResponseTest.cc\
 	RpcMethodTest.cc\
 	HttpServerTest.cc\
+	IOFileTest.cc\
 	BufferedFileTest.cc\
 	GeomStreamPieceSelectorTest.cc\
 	SegListTest.cc\
@@ -317,8 +318,10 @@ AM_CFLAGS = @EXTRACFLAGS@
 AM_CXXFLAGS = @WARNCXXFLAGS@ @CXX1XCXXFLAGS@ @EXTRACXXFLAGS@
 
 EXTRA_DIST = perf/http-tail-reclaim.bench.mjs\
+	e2e/security-regressions.e2e.test.mjs\
 	e2e/legacy-checkpoint-import.e2e.test.mjs\
 	e2e/helpers/aria2-process.mjs\
+	e2e/helpers/bencode.mjs\
 	e2e/helpers/rpc-client.mjs\
 	e2e/fixtures/legacy-v1/partial.bin.aria2\
 	e2e/fixtures/legacy-v1/partial.bin.gz\

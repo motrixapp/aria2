@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <iostream>
+#include <limits>
 
 #include <cppunit/extensions/HelperMacros.h>
 
@@ -49,6 +50,8 @@ class BittorrentHelperTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testGetFileEntries_singleFileUrlListEndsWithSlash);
   CPPUNIT_TEST(testLoadFromMemory);
   CPPUNIT_TEST(testLoadFromMemory_somethingMissing);
+  CPPUNIT_TEST(testLoadFromMemory_invalidPieceLength);
+  CPPUNIT_TEST(testLoadFromMemory_pieceLengthBounds);
   CPPUNIT_TEST(testLoadFromMemory_overrideName);
   CPPUNIT_TEST(testLoadFromMemory_multiFileDirTraversal);
   CPPUNIT_TEST(testLoadFromMemory_singleFileDirTraversal);
@@ -109,6 +112,8 @@ public:
   void testGetFileEntries_singleFileUrlListEndsWithSlash();
   void testLoadFromMemory();
   void testLoadFromMemory_somethingMissing();
+  void testLoadFromMemory_invalidPieceLength();
+  void testLoadFromMemory_pieceLengthBounds();
   void testLoadFromMemory_overrideName();
   void testLoadFromMemory_multiFileDirTraversal();
   void testLoadFromMemory_singleFileDirTraversal();
@@ -525,6 +530,56 @@ void BittorrentHelperTest::testLoadFromMemory_somethingMissing()
   }
   catch (Exception& e) {
     // OK
+  }
+}
+
+void BittorrentHelperTest::testLoadFromMemory_invalidPieceLength()
+{
+  const int64_t invalidLengths[] = {
+      -1, 0, int64_t(std::numeric_limits<int32_t>::max()) + 1, int64_t(1) << 32,
+      std::numeric_limits<int64_t>::max()};
+  for (auto pieceLength : invalidLengths) {
+    for (int64_t totalLength : {0, 1}) {
+      auto info = Dict::g();
+      info->put("name", "invalid.bin");
+      info->put("length", Integer::g(totalLength));
+      info->put("piece length", Integer::g(pieceLength));
+      info->put("pieces", std::string(totalLength ? 20 : 0, 'x'));
+      Dict torrent;
+      torrent.put("info", std::move(info));
+      auto dctx = std::make_shared<DownloadContext>();
+      dctx->setPieceLength(1024);
+      try {
+        loadFromMemory(bencode2::encode(&torrent), dctx, option_, "default");
+        CPPUNIT_FAIL("Invalid piece length must be rejected.");
+      }
+      catch (const RecoverableException& e) {
+        CPPUNIT_ASSERT_EQUAL(error_code::BITTORRENT_PARSE_ERROR,
+                             e.getErrorCode());
+      }
+      CPPUNIT_ASSERT_EQUAL(int32_t(1024), dctx->getPieceLength());
+      CPPUNIT_ASSERT(dctx->getFileEntries().empty());
+    }
+  }
+}
+
+void BittorrentHelperTest::testLoadFromMemory_pieceLengthBounds()
+{
+  for (int32_t pieceLength : {1, 1024, std::numeric_limits<int32_t>::max()}) {
+    for (int64_t totalLength : {0, 1}) {
+      auto info = Dict::g();
+      info->put("name", "valid.bin");
+      info->put("length", Integer::g(totalLength));
+      info->put("piece length", Integer::g(pieceLength));
+      info->put("pieces", std::string(totalLength ? 20 : 0, 'x'));
+      Dict torrent;
+      torrent.put("info", std::move(info));
+      auto dctx = std::make_shared<DownloadContext>();
+      loadFromMemory(bencode2::encode(&torrent), dctx, option_, "default");
+      CPPUNIT_ASSERT_EQUAL(pieceLength, dctx->getPieceLength());
+      CPPUNIT_ASSERT_EQUAL(totalLength, dctx->getTotalLength());
+      CPPUNIT_ASSERT_EQUAL(size_t(totalLength), dctx->getNumPieces());
+    }
   }
 }
 

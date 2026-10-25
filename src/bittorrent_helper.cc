@@ -38,6 +38,7 @@
 #include <cassert>
 #include <cstring>
 #include <algorithm>
+#include <limits>
 
 #include "DownloadContext.h"
 #include "Randomizer.h"
@@ -476,9 +477,12 @@ void processRootDictionary(const std::shared_ptr<DownloadContext>& ctx,
                        error_code::BITTORRENT_PARSE_ERROR);
   }
 
-  if (pieceLengthData->i() < 0) {
+  // Reject zero before division and values that cannot fit DownloadContext's
+  // int32_t piece length, even for torrents with an empty payload.
+  if (pieceLengthData->i() <= 0 ||
+      pieceLengthData->i() > std::numeric_limits<int32_t>::max()) {
     throw DL_ABORT_EX2(
-        fmt(MSG_NEGATIVE_LENGTH_BT_INFO, C_PIECE_LENGTH, pieceLengthData->i()),
+        fmt("Invalid piece length: %" PRId64, pieceLengthData->i()),
         error_code::BITTORRENT_PARSE_ERROR);
   }
 

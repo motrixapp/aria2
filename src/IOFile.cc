@@ -69,8 +69,8 @@ char* IOFile::getsn(char* s, int size)
 {
   char* ptr = gets(s, size);
   if (ptr) {
-    int len = strlen(ptr);
-    if (ptr[len - 1] == '\n') {
+    size_t len = strlen(ptr);
+    if (len > 0 && ptr[len - 1] == '\n') {
       ptr[len - 1] = '\0';
     }
   }
@@ -87,7 +87,7 @@ std::string IOFile::getLine()
   while (gets(buf.data(), buf.size())) {
     size_t len = strlen(buf.data());
     bool lineBreak = false;
-    if (buf[len - 1] == '\n') {
+    if (len > 0 && buf[len - 1] == '\n') {
       --len;
       lineBreak = true;
     }

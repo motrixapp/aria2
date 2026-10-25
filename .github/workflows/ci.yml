@@ -33,6 +33,7 @@ jobs:
           autopoint \
           libtool \
           pkg-config \
+          openssl \
           libssl-dev \
           libgnutls28-dev \
           libc-ares-dev \
@@ -105,6 +106,10 @@ jobs:
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: 24
+    - name: Verify security regressions
+      env:
+        ARIA2_E2E_BIN: ${{ github.workspace }}/src/aria2c
+      run: node --test --test-timeout=60000 test/e2e/security-regressions.e2e.test.mjs
     - name: Verify task cookies and credential redirects
       env:
         ARIA2_E2E_BIN: ${{ github.workspace }}/src/aria2c
