@@ -17,6 +17,7 @@ const secret = 'synthetic-cookie-rpc-secret'
 let root, http, other, tls, base, otherBase, tlsBase
 let requests = []
 let serial = 0
+const interruptedPaths = new Set()
 
 function handler(req, res) {
   requests.push({ path: req.url, host: req.headers.host, ...req.headers })
@@ -39,7 +40,7 @@ function handler(req, res) {
   }
   const blobAuthorized = ['sid=good', 'sid=rotated']
     .some(value => req.headers.cookie?.includes(value))
-  let body = req.url === '/blob' ? payload : Buffer.from(req.headers.cookie?.includes('sid=good') ? 'REAL_TEST_FILE' : 'COOKIE_REQUIRED')
+  let body = req.url === '/blob' || req.url.startsWith('/interrupted-') ? payload : Buffer.from(req.headers.cookie?.includes('sid=good') ? 'REAL_TEST_FILE' : 'COOKIE_REQUIRED')
   const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? '')
   if (req.url === '/blob' && !blobAuthorized) {
     body = Buffer.from('COOKIE_REQUIRED')
@@ -58,6 +59,11 @@ function handler(req, res) {
     body = body.subarray(first, last + 1)
   }
   res.setHeader('content-length', body.length)
+  if (req.method !== 'HEAD' && interruptedPaths.has(req.url)) {
+    res.write(body.subarray(0, 512 * 1024))
+    setTimeout(() => res.destroy(), 100)
+    return
+  }
   res.end(req.method === 'HEAD' ? undefined : body)
 }
 
@@ -344,6 +350,42 @@ describe('task cookie and credential redirect contract', { concurrency: false },
     await finished(next, task)
     assert.equal(requests.find(request => request.path === '/rpc-replaced').cookie,
       'sid=account-new;')
+  })
+
+  it('retains failed task jars and resumes partial files after network loss and restart', async t => {
+    const e = await engine(t)
+    const cases = []
+    for (const [label, cookies] of [['populated', [cookie()]], ['empty', []]]) {
+      const urlPath = `/interrupted-${label}`
+      interruptedPaths.add(urlPath)
+      const task = await submit(e, base + urlPath, cookies)
+      const failed = await until(() => e.rpc.tellStatus(task.gid), r => r.status === 'error')
+      assert.ok(Number(failed.completedLength) > 0)
+      assert.ok(Number(failed.completedLength) < payload.length)
+      assert.equal(sqlScalar(e, 'SELECT COUNT(*) FROM task WHERE gid=?', task.gid), '1')
+      assert.equal(sqlScalar(e, 'SELECT COUNT(*) FROM task_cookie_context WHERE gid=?', task.gid), '1')
+      assert.equal(sqlScalar(e, 'SELECT COUNT(*) FROM task_cookie WHERE gid=?', task.gid), cookies.length ? '1' : '0')
+      cases.push({ ...task, urlPath, cookies })
+    }
+    // Result removal still retires credentials for a failed task.
+    const removed = await submit(e, base + '/interrupted-populated', [cookie()])
+    await until(() => e.rpc.tellStatus(removed.gid), r => r.status === 'error')
+    await e.rpc.removeDownloadResult(removed.gid)
+    assert.equal(sqlScalar(e, 'SELECT COUNT(*) FROM task_cookie_context WHERE gid=?', removed.gid), '0')
+
+    await e.rpc.saveSession()
+    await e.stop()
+    interruptedPaths.clear()
+    const next = await engine(t, { directory: e.dir, restore: true })
+    requests = []
+    for (const task of cases) {
+      await next.rpc.unpause(task.gid)
+      assert.deepEqual(await finished(next, task), payload)
+      const resumed = requests.filter(r => r.path === task.urlPath)
+      assert.ok(resumed.some(r => /^bytes=[1-9]\d*-/.test(r.range ?? '')))
+      assert.ok(resumed.every(r => task.cookies.length ? r.cookie === 'sid=good;' : r.cookie === undefined))
+      await until(() => Promise.resolve(sqlScalar(next, 'SELECT COUNT(*) FROM task_cookie_context WHERE gid=?', task.gid)), value => value === '0')
+    }
   })
 
   it('persists a server-rotated cookie before an abrupt process crash', async t => {

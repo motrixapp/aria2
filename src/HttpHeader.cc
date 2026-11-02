@@ -234,6 +234,7 @@ constexpr const char* INTERESTING_HEADER_NAMES[] = {
     "content-range",
     "content-type",
     "digest",
+    "etag",
     "infohash",
     "last-modified",
     "link",

@@ -427,6 +427,24 @@ void migrate_v4_to_v5(Sqlite3PersistenceStore& store)
   });
 }
 
+void migrate_v5_to_v6(Sqlite3PersistenceStore& store)
+{
+  store.withTransaction([&]() {
+    const char* sql =
+        "CREATE TABLE task_http_context ("
+        " gid TEXT PRIMARY KEY REFERENCES task(gid) ON DELETE CASCADE,"
+        " source_hash TEXT NOT NULL, resource_hash TEXT NOT NULL,"
+        " output_path TEXT NOT NULL, validator_kind TEXT NOT NULL,"
+        " validator TEXT NOT NULL, total_length INTEGER NOT NULL);"
+        "UPDATE meta SET value='6' WHERE key='schema_version';"
+        "PRAGMA user_version=6;";
+    if (sqlite3_exec(store.raw(), sql, nullptr, nullptr, nullptr) !=
+        SQLITE_OK) {
+      throw DL_ABORT_EX("sqlite3-persistence: HTTP context migration failed");
+    }
+  });
+}
+
 struct Migration {
   int from;
   int to;
@@ -436,7 +454,7 @@ struct Migration {
 static const Migration kMigrations[] = {
     {0, 1, &migrate_v0_to_v1}, {1, 2, &migrate_v1_to_v2},
     {2, 3, &migrate_v2_to_v3}, {3, 4, &migrate_v3_to_v4},
-    {4, 5, &migrate_v4_to_v5},
+    {4, 5, &migrate_v4_to_v5}, {5, 6, &migrate_v5_to_v6},
 };
 
 } // namespace

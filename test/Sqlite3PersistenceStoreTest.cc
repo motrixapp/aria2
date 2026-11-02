@@ -109,27 +109,33 @@ void Sqlite3PersistenceStoreTest::testMigrationBackupIncludesWal()
   std::remove(dbPath.c_str());
   Sqlite3PersistenceStore writer(dbPath);
   writer.open();
-  CPPUNIT_ASSERT_EQUAL(SQLITE_OK, sqlite3_exec(writer.raw(),
-      "PRAGMA wal_autocheckpoint=0;"
-      "DROP TABLE legacy_torrent_metadata;"
-      "DROP TABLE legacy_checkpoint_file;"
-      "DROP TABLE legacy_checkpoint_import;"
-      "CREATE TABLE backup_sentinel(value TEXT);"
-      "INSERT INTO backup_sentinel VALUES('committed in WAL');"
-      "UPDATE meta SET value='3' WHERE key='schema_version';"
-      "PRAGMA user_version=3;", nullptr, nullptr, nullptr));
+  CPPUNIT_ASSERT_EQUAL(
+      SQLITE_OK,
+      sqlite3_exec(
+          writer.raw(),
+          "PRAGMA wal_autocheckpoint=0;"
+          "DROP TABLE task_http_context; DROP TABLE legacy_torrent_metadata;"
+          "DROP TABLE legacy_checkpoint_file;"
+          "DROP TABLE legacy_checkpoint_import;"
+          "CREATE TABLE backup_sentinel(value TEXT);"
+          "INSERT INTO backup_sentinel VALUES('committed in WAL');"
+          "UPDATE meta SET value='3' WHERE key='schema_version';"
+          "PRAGMA user_version=3;",
+          nullptr, nullptr, nullptr));
 
   // The writer remains open: a raw copy of the database body loses these rows.
   Sqlite3PersistenceStore upgraded(dbPath);
   upgraded.open();
-  CPPUNIT_ASSERT_EQUAL(std::string("5"), upgraded.queryPragma("user_version"));
+  CPPUNIT_ASSERT_EQUAL(std::to_string(kCurrentSchemaVersion),
+                       upgraded.queryPragma("user_version"));
   DIR* directory = opendir(A2_TEST_OUT_DIR);
   CPPUNIT_ASSERT(directory != nullptr);
   bool verified = false;
   struct dirent* entry;
   while ((entry = readdir(directory)) != nullptr) {
     const std::string name = entry->d_name;
-    if (name.find("test_upgrade_backup.db.pre-schema5-v3.") != 0 ||
+    if (name.find("test_upgrade_backup.db.pre-schema" +
+                  std::to_string(kCurrentSchemaVersion) + "-v3.") != 0 ||
         name.size() < 3 || name.substr(name.size() - 3) != ".db") {
       continue;
     }

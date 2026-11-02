@@ -33,6 +33,9 @@
  */
 /* copyright --> */
 #include "RequestGroup.h"
+#ifdef HAVE_SQLITE3
+#  include "Sqlite3SessionStore.h"
+#endif
 
 #include <cassert>
 #include <algorithm>
@@ -284,6 +287,27 @@ RequestGroup::createCheckIntegrityEntry(DownloadEngine* e,
 void RequestGroup::createInitialCommand(
     std::vector<std::unique_ptr<Command>>& commands, DownloadEngine* e)
 {
+#ifdef HAVE_SQLITE3
+  if (httpResumeContext_) {
+    const auto& files = downloadContext_->getFileEntries();
+    if (files.size() != 1 ||
+        files[0]->getPath() != httpResumeContext_->outputPath) {
+      throw DOWNLOAD_FAILURE_EXCEPTION2(
+          "HTTP continuation output binding changed.",
+          error_code::CANNOT_RESUME);
+    }
+    const auto uris = files[0]->getUris();
+    if (uris.empty() ||
+        std::any_of(uris.begin(), uris.end(), [&](const std::string& uri) {
+          return Sqlite3SessionStore::httpUriHash(uri) !=
+                 httpResumeContext_->sourceHash;
+        })) {
+      throw DOWNLOAD_FAILURE_EXCEPTION2(
+          "HTTP continuation source binding changed.",
+          error_code::CANNOT_RESUME);
+    }
+  }
+#endif
   if (option_->getAsBool(PREF_REQUIRE_TASK_COOKIES) && !taskCookieStorage_) {
     throw DOWNLOAD_FAILURE_EXCEPTION2(
         "Task cookie context is unavailable after engine restart.",

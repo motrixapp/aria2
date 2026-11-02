@@ -52,6 +52,7 @@ class CookieStorage;
 class RequestGroup;
 class Sqlite3PersistenceStore;
 class RequestGroupMan;
+struct HttpResumeContext;
 
 class Sqlite3SessionStore {
 public:
@@ -91,6 +92,19 @@ public:
   // its result/session data.
   void deleteTaskCookies(const std::string& gidHex);
 
+  // Native HTTP continuation never exports request credentials to its caller.
+  static std::string httpUriHash(const std::string& uri);
+  static void constrainHttpRetryOptions(Option& option);
+  std::shared_ptr<RequestGroup>
+  loadHttpRetry(const std::shared_ptr<GroupId>& gid,
+                const std::shared_ptr<Option>& op);
+  void commitHttpRetry(const std::shared_ptr<RequestGroup>& rg);
+  void retainFailedHttpTask(const std::shared_ptr<RequestGroup>& rg);
+  // Clear stopped contexts/history atomically, excluding every live owner.
+  void purgeStoppedTasks(const std::vector<a2_gid_t>& liveGids,
+                         const std::vector<a2_gid_t>& stoppedGids);
+  void deleteHttpResumeContext(const std::string& gidHex);
+
   // Delete the task row identified by gidHex.
   void deleteTask(const std::string& gidHex);
 
@@ -106,6 +120,7 @@ private:
 
   void removeOrphanTasks(const std::vector<a2_gid_t>& liveGids);
   void restoreTaskCookies(const std::shared_ptr<RequestGroup>& rg);
+  void restoreHttpResumeContext(const std::shared_ptr<RequestGroup>& rg);
 };
 
 } // namespace aria2

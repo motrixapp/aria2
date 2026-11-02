@@ -297,6 +297,10 @@ public:
   // Removes download result of given gid from the in-memory window and,
   // when sqlite3 persistence is active, from the durable stores.
   RemoveResult removeDownloadResult(a2_gid_t gid);
+  // Retry shares the registered owner, including evicted and pending results.
+  std::shared_ptr<GroupId> retainStoppedGroupId(a2_gid_t gid) const;
+  // Release stopped holders only after durable history retirement succeeded.
+  void forgetStoppedResult(a2_gid_t gid);
 
   void addDownloadResult(const std::shared_ptr<DownloadResult>& downloadResult);
 

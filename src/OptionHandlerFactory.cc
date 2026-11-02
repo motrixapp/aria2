@@ -1202,6 +1202,15 @@ std::vector<OptionHandler*> OptionHandlerFactory::createOptionHandlers()
     handlers.push_back(op);
   }
   {
+    OptionHandler* op(new BooleanOptionHandler(
+        PREF_HTTP_RESUME_CONTEXT,
+        "Persist and enforce the resource identity of a single HTTP download.",
+        A2_V_FALSE));
+    op->addTag(TAG_HTTP);
+    op->setInitialOption(true);
+    handlers.push_back(op);
+  }
+  {
     OptionHandler* op(new NumberOptionHandler(PREF_MAX_HTTP_PIPELINING,
                                               NO_DESCRIPTION, "2", 1, 8));
     op->hide();

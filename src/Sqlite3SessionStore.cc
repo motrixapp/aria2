@@ -45,14 +45,16 @@
 
 #include "Cookie.h"
 #include "CookieStorage.h"
-#include "DlAbortEx.h"
-#include "GroupId.h"
-#include "MessageDigest.h"
-#include "Option.h"
-#include "RequestGroup.h"
-#include "RequestGroupMan.h"
-#include "SessionSerializer.h"
-#include "Sqlite3PersistenceStore.h"
+#  include "A2STR.h"
+#  include "DlAbortEx.h"
+#  include "GroupId.h"
+#  include "MessageDigest.h"
+#  include "Option.h"
+#  include "RequestGroup.h"
+#  include "RequestGroupMan.h"
+#  include "SessionSerializer.h"
+#  include "util.h"
+#  include "Sqlite3PersistenceStore.h"
 #  include "LegacyCheckpointImport.h"
 #  include "download_helper.h"
 #  include "fmt.h"
@@ -111,7 +113,7 @@ const char* const kSelectQueuePosSql =
     "SELECT queue_position FROM task WHERE gid = ?";
 
 const char* const kSelectSerializedSql =
-    "SELECT serialized,gid FROM task ORDER BY queue_position ASC";
+    "SELECT serialized,gid,state FROM task ORDER BY queue_position ASC";
 
 const char* const kShiftForwardSql =
     "UPDATE task SET queue_position = queue_position - 1"
@@ -155,6 +157,34 @@ void bindText(sqlite3_stmt* stmt, int index, const std::string& value)
 {
   sqlite3_bind_text(stmt, index, value.data(), static_cast<int>(value.size()),
                     SQLITE_TRANSIENT);
+}
+
+void writeHttpResumeContext(sqlite3* db,
+                            const std::shared_ptr<RequestGroup>& rg)
+{
+  const auto& context = rg->getHttpResumeContext();
+  if (!context)
+    return;
+  StmtGuard stmt;
+  const char* sql =
+      "INSERT INTO task_http_context VALUES (?,?,?,?,?,?,?)"
+      " ON CONFLICT(gid) DO UPDATE SET source_hash=excluded.source_hash,"
+      " resource_hash=excluded.resource_hash, output_path=excluded.output_path,"
+      " validator_kind=excluded.validator_kind, validator=excluded.validator,"
+      " total_length=excluded.total_length";
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt.stmt, nullptr) != SQLITE_OK) {
+    throw DL_ABORT_EX("sqlite3-persistence: prepare HTTP context failed");
+  }
+  bindText(stmt, 1, GroupId::toHex(rg->getGID()));
+  bindText(stmt, 2, context->sourceHash);
+  bindText(stmt, 3, context->resourceHash);
+  bindText(stmt, 4, context->outputPath);
+  bindText(stmt, 5, context->validatorKind);
+  bindText(stmt, 6, context->validator);
+  sqlite3_bind_int64(stmt, 7, context->totalLength);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    throw DL_ABORT_EX("sqlite3-persistence: save HTTP context failed");
+  }
 }
 
 void replaceTaskCookiesInTransaction(
@@ -321,9 +351,10 @@ void Sqlite3SessionStore::saveAllTasks(RequestGroupMan* rgman)
   }
 
   // Step 2: orphan removal. Any task row whose gid is no longer in the
-  // active+reserved+stopped set represents a row that was never paired
-  // with a RG / DownloadResult in this session. Its checkpoint, if any, is
-  // kept while the data file exists so a front-end retry can resume it.
+  // active+reserved+stopped set may be orphaned, except explicitly retained
+  // failures: FIFO eviction does not retire their request context. Its
+  // checkpoint, if any, is kept while the data file exists so a front-end retry
+  // can resume it.
   removeOrphanTasks(liveGids);
 }
 
@@ -336,7 +367,8 @@ void Sqlite3SessionStore::removeOrphanTasks(
     if (liveGids.empty()) {
       // Keep invalidated metadata bindings as durable recovery evidence.
       if (sqlite3_exec(db,
-                       "DELETE FROM task WHERE gid NOT IN (SELECT gid FROM "
+                       "DELETE FROM task WHERE state != 'error' AND gid NOT IN "
+                       "(SELECT gid FROM "
                        "legacy_torrent_metadata WHERE invalidated=1)",
                        nullptr, nullptr, nullptr) != SQLITE_OK) {
         throw DL_ABORT_EX(
@@ -348,7 +380,8 @@ void Sqlite3SessionStore::removeOrphanTasks(
 
     // Build "DELETE FROM task WHERE gid NOT IN (?, ?, ...)" with N
     // placeholders.
-    std::string sql = "DELETE FROM task WHERE gid NOT IN (";
+    std::string sql =
+        "DELETE FROM task WHERE state != 'error' AND gid NOT IN (";
     for (size_t i = 0; i < liveGids.size(); ++i) {
       sql += (i == 0 ? "?" : ", ?");
     }
@@ -403,10 +436,17 @@ void Sqlite3SessionStore::loadActiveTasksInto(
     const char* text =
         reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
     if (text) {
+      const auto loadedBefore = out.size();
       const auto gid = columnText(stmt, 1);
       if (!restoreLegacyTorrentTask(*store_, gid, text, op, out)) {
         std::stringstream input(text);
         createRequestGroupForUriList(out, op, input);
+      }
+      if (columnText(stmt, 2) == "error") {
+        for (auto i = loadedBefore; i < out.size(); ++i) {
+          // Failure is not permission to start again during engine startup.
+          out[i]->setPauseRequested(true);
+        }
       }
     }
   }
@@ -418,6 +458,10 @@ void Sqlite3SessionStore::loadActiveTasksInto(
 
   for (auto i = firstLoaded; i < out.size(); ++i) {
     restoreTaskCookies(out[i]);
+    restoreHttpResumeContext(out[i]);
+    if (out[i]->getHttpResumeContext()) {
+      constrainHttpRetryOptions(*out[i]->getOption());
+    }
   }
 }
 
@@ -512,6 +556,7 @@ void Sqlite3SessionStore::upsertTask(const std::shared_ptr<RequestGroup>& rg,
             sqlite3_errmsg(db)));
       }
     }
+    writeHttpResumeContext(db, rg);
   };
   if (useExistingTransaction) {
     if (sqlite3_get_autocommit(db)) {
@@ -642,6 +687,212 @@ void Sqlite3SessionStore::restoreTaskCookies(
         sqlite3_errmsg(db)));
   }
   rg->setTaskCookieStorage(std::move(storage));
+}
+
+std::string Sqlite3SessionStore::httpUriHash(const std::string& uri)
+{
+  auto digest = MessageDigest::create("sha-256");
+  digest->update(uri.data(), uri.size());
+  return util::toHex(digest->digest());
+}
+
+void Sqlite3SessionStore::restoreHttpResumeContext(
+    const std::shared_ptr<RequestGroup>& rg)
+{
+  StmtGuard stmt;
+  const char* sql = "SELECT source_hash,resource_hash,output_path,"
+                    "validator_kind,validator,total_length"
+                    " FROM task_http_context WHERE gid=?";
+  if (sqlite3_prepare_v2(store_->raw(), sql, -1, &stmt.stmt, nullptr) !=
+      SQLITE_OK) {
+    throw DL_ABORT_EX("sqlite3-persistence: read HTTP context failed");
+  }
+  bindText(stmt, 1, GroupId::toHex(rg->getGID()));
+  const int rc = sqlite3_step(stmt);
+  if (rc == SQLITE_DONE)
+    return;
+  if (rc != SQLITE_ROW) {
+    throw DL_ABORT_EX("sqlite3-persistence: read HTTP context failed");
+  }
+  auto context = std::make_shared<HttpResumeContext>();
+  context->sourceHash = columnText(stmt, 0);
+  context->resourceHash = columnText(stmt, 1);
+  context->outputPath = columnText(stmt, 2);
+  context->validatorKind = columnText(stmt, 3);
+  context->validator = columnText(stmt, 4);
+  context->totalLength = sqlite3_column_int64(stmt, 5);
+  if (context->sourceHash.size() != 64 || context->resourceHash.size() != 64 ||
+      context->outputPath.empty() || context->totalLength <= 0 ||
+      context->validator.empty() || context->validator.size() > 512 ||
+      (context->validatorKind != "etag" &&
+       context->validatorKind != "last-modified")) {
+    throw DL_ABORT_EX("sqlite3-persistence: invalid HTTP context");
+  }
+  rg->setHttpResumeContext(std::move(context));
+}
+
+std::shared_ptr<RequestGroup>
+Sqlite3SessionStore::loadHttpRetry(const std::shared_ptr<GroupId>& gid,
+                                   const std::shared_ptr<Option>& op)
+{
+  StmtGuard stmt;
+  if (sqlite3_prepare_v2(store_->raw(),
+                         "SELECT serialized FROM task WHERE gid=?", -1,
+                         &stmt.stmt, nullptr) != SQLITE_OK) {
+    throw DL_ABORT_EX("sqlite3-persistence: read retry task failed");
+  }
+  bindText(stmt, 1, gid->toHex());
+  const auto rc = sqlite3_step(stmt);
+  if (rc == SQLITE_DONE)
+    return nullptr;
+  if (rc != SQLITE_ROW)
+    throw DL_ABORT_EX("sqlite3-persistence: read retry task failed");
+  std::istringstream input(columnText(stmt, 0));
+  std::ostringstream filtered;
+  std::string line;
+  while (std::getline(input, line)) {
+    auto start = line.find_first_not_of(" \t");
+    if (start != std::string::npos && start > 0 &&
+        line.compare(start, 4, "gid=") == 0)
+      continue;
+    filtered << line << '\n';
+  }
+  std::istringstream serialized(filtered.str());
+  std::vector<std::shared_ptr<RequestGroup>> groups;
+  createRequestGroupForUriList(groups, op, serialized);
+  if (groups.size() != 1)
+    return nullptr;
+  auto rg = groups.front();
+  rg->adoptRetryGroupId(gid);
+  restoreTaskCookies(rg);
+  restoreHttpResumeContext(rg);
+  constrainHttpRetryOptions(*rg->getOption());
+  return rg;
+}
+
+void Sqlite3SessionStore::constrainHttpRetryOptions(Option& option)
+{
+  option.put(PREF_ALLOW_OVERWRITE, A2_V_FALSE);
+  option.put(PREF_AUTO_FILE_RENAMING, A2_V_FALSE);
+  option.put(PREF_ALWAYS_RESUME, A2_V_TRUE);
+  option.put(PREF_CONTINUE, A2_V_FALSE);
+  option.put(PREF_CONDITIONAL_GET, A2_V_FALSE);
+  option.put(PREF_CHECK_INTEGRITY, A2_V_FALSE);
+  option.put(PREF_HTTP_RESUME_CONTEXT, A2_V_TRUE);
+  std::istringstream input(option.get(PREF_HEADER));
+  std::string line, headers;
+  while (std::getline(input, line)) {
+    if (util::istartsWith(line, "If-Modified-Since:") ||
+        util::istartsWith(line, "If-None-Match:") ||
+        util::istartsWith(line, "If-Range:") ||
+        util::istartsWith(line, "If-Match:") ||
+        util::istartsWith(line, "Range:"))
+      continue;
+    headers += line + '\n';
+  }
+  option.put(PREF_HEADER, headers);
+}
+
+void Sqlite3SessionStore::commitHttpRetry(
+    const std::shared_ptr<RequestGroup>& rg)
+{
+  store_->withTransaction([&]() {
+    upsertTask(rg, true, true);
+    StmtGuard stmt;
+    if (sqlite3_prepare_v2(store_->raw(),
+                           "DELETE FROM download_history WHERE gid=?", -1,
+                           &stmt.stmt, nullptr) != SQLITE_OK) {
+      throw DL_ABORT_EX(
+          "sqlite3-persistence: prepare retry history retirement failed");
+    }
+    bindText(stmt, 1, GroupId::toHex(rg->getGID()));
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+      throw DL_ABORT_EX("sqlite3-persistence: retry history retirement failed");
+    }
+  });
+}
+
+void Sqlite3SessionStore::retainFailedHttpTask(
+    const std::shared_ptr<RequestGroup>& rg)
+{
+  store_->withTransaction([&]() {
+    // Flush the final jar too, including a response rotation whose earlier
+    // immediate write failed. Cookie snapshot and paused recovery intent commit
+    // together; startup must not run the old request between those writes.
+    upsertTask(rg, true, true);
+    StmtGuard stmt;
+    if (sqlite3_prepare_v2(store_->raw(),
+                           "UPDATE task SET state='error' WHERE gid=?", -1,
+                           &stmt.stmt, nullptr) != SQLITE_OK) {
+      throw DL_ABORT_EX("sqlite3-persistence: prepare failed HTTP task failed");
+    }
+    bindText(stmt, 1, GroupId::toHex(rg->getGID()));
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+      throw DL_ABORT_EX("sqlite3-persistence: retain failed HTTP task failed");
+    }
+  });
+}
+
+void Sqlite3SessionStore::purgeStoppedTasks(
+    const std::vector<a2_gid_t>& liveGids,
+    const std::vector<a2_gid_t>& stoppedGids)
+{
+  store_->withTransaction([&]() {
+    auto* db = store_->raw();
+    if (sqlite3_exec(
+            db,
+            "CREATE TEMP TABLE IF NOT EXISTS purge_live_tasks(gid TEXT PRIMARY "
+            "KEY);"
+            "CREATE TEMP TABLE IF NOT EXISTS purge_stopped_tasks(gid TEXT "
+            "PRIMARY KEY);"
+            "DELETE FROM purge_live_tasks; DELETE FROM purge_stopped_tasks;",
+            nullptr, nullptr, nullptr) != SQLITE_OK) {
+      throw DL_ABORT_EX("sqlite3-persistence: prepare stopped purge failed");
+    }
+    const auto populate = [&](const char* sql,
+                              const std::vector<a2_gid_t>& gids) {
+      StmtGuard stmt;
+      if (sqlite3_prepare_v2(db, sql, -1, &stmt.stmt, nullptr) != SQLITE_OK)
+        throw DL_ABORT_EX("sqlite3-persistence: prepare purge owners failed");
+      for (auto gid : gids) {
+        sqlite3_reset(stmt);
+        bindText(stmt, 1, GroupId::toHex(gid));
+        if (sqlite3_step(stmt) != SQLITE_DONE)
+          throw DL_ABORT_EX("sqlite3-persistence: save purge owners failed");
+      }
+    };
+    populate("INSERT OR IGNORE INTO purge_live_tasks VALUES (?)", liveGids);
+    populate("INSERT OR IGNORE INTO purge_stopped_tasks VALUES (?)",
+             stoppedGids);
+    if (sqlite3_exec(
+            db,
+            "DELETE FROM task WHERE gid NOT IN (SELECT gid FROM "
+            "purge_live_tasks)"
+            " AND (state='error' OR gid IN (SELECT gid FROM download_history)"
+            " OR gid IN (SELECT gid FROM purge_stopped_tasks));"
+            "DELETE FROM download_history;"
+            "DELETE FROM purge_live_tasks; DELETE FROM purge_stopped_tasks;",
+            nullptr, nullptr, nullptr) != SQLITE_OK) {
+      throw DL_ABORT_EX("sqlite3-persistence: stopped purge failed");
+    }
+  });
+}
+
+void Sqlite3SessionStore::deleteHttpResumeContext(const std::string& gidHex)
+{
+  store_->withTransaction([&]() {
+    StmtGuard stmt;
+    if (sqlite3_prepare_v2(store_->raw(),
+                           "DELETE FROM task_http_context WHERE gid=?", -1,
+                           &stmt.stmt, nullptr) != SQLITE_OK) {
+      throw DL_ABORT_EX(
+          "sqlite3-persistence: prepare HTTP context retirement failed");
+    }
+    bindText(stmt, 1, gidHex);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+      throw DL_ABORT_EX("sqlite3-persistence: HTTP context retirement failed");
+    }
+  });
 }
 
 void Sqlite3SessionStore::deleteTask(const std::string& gidHex)

@@ -78,8 +78,12 @@
 #include "NullProgressInfoFile.h"
 #include "Checksum.h"
 #include "ChecksumCheckIntegrityEntry.h"
+#ifdef ENABLE_BITTORRENT
+#  include "bittorrent_helper.h"
+#endif
 #ifdef HAVE_SQLITE3
 #  include "Sqlite3SessionStore.h"
+#  include "MessageDigest.h"
 #endif // HAVE_SQLITE3
 #ifdef HAVE_ZLIB
 #  include "GZipDecodingStreamFilter.h"
@@ -88,6 +92,93 @@
 namespace aria2 {
 
 namespace {
+
+#ifdef HAVE_SQLITE3
+void bindHttpPayload(HttpResponse* response, RequestGroup* group,
+                     const Request* request, const FileEntry* file,
+                     DownloadEngine* engine)
+{
+  auto* store = engine->getSqlite3SessionStore();
+  const auto& expected = group->getHttpResumeContext();
+  if (!expected &&
+      (!store || !group->getOption()->getAsBool(PREF_HTTP_RESUME_CONTEXT) ||
+       group->getDownloadContext()->getFileEntries().size() != 1 ||
+       file->getPath().empty() || request->getMethod() != Request::METHOD_GET ||
+       !MessageDigest::supports("sha-256")))
+    return;
+#  ifdef ENABLE_BITTORRENT
+  if (!expected && group->getDownloadContext()->hasAttribute(CTX_ATTR_BT))
+    return;
+#  endif
+  const auto& headers = response->getHttpHeader();
+  const auto length = response->getEntityLength();
+  const auto& encoding = headers->find(HttpHeader::CONTENT_ENCODING);
+  const bool representable =
+      length > 0 && !headers->defined(HttpHeader::TRANSFER_ENCODING) &&
+      (encoding.empty() || util::strieq(encoding, "identity"));
+  const auto sourceHash = Sqlite3SessionStore::httpUriHash(request->getUri());
+  const auto resourceHash =
+      Sqlite3SessionStore::httpUriHash(request->getCurrentUri());
+  if (expected) {
+    const auto& value = headers->find(expected->validatorKind == "etag"
+                                          ? HttpHeader::ETAG
+                                          : HttpHeader::LAST_MODIFIED);
+    if (!representable || response->getHttpRequest()->conditionalRequest() ||
+        expected->sourceHash != sourceHash ||
+        expected->resourceHash != resourceHash ||
+        expected->outputPath != file->getPath() ||
+        expected->totalLength != length || expected->validator != value) {
+      throw DL_ABORT_EX2(
+          "HTTP resource changed; retained partial file was not modified.",
+          error_code::CANNOT_RESUME);
+    }
+    return;
+  }
+  // A current response cannot retrospectively prove the identity of old bytes.
+  const auto uris = file->getUris();
+  if (std::any_of(uris.begin(), uris.end(), [&](const std::string& uri) {
+        return uri != request->getUri();
+      }))
+    return;
+  File output(file->getPath());
+  if (!representable || group->getCompletedLength() > 0 ||
+      (output.exists() && output.size() != 0))
+    return;
+  auto context = std::make_shared<HttpResumeContext>();
+  const auto& etag = headers->find(HttpHeader::ETAG);
+  if (etag.size() >= 2 && etag.size() <= 512 && etag.front() == '"' &&
+      etag.back() == '"' && etag.find_first_of("\r\n") == std::string::npos) {
+    context->validatorKind = "etag";
+    context->validator = etag;
+  }
+  else if (response->getLastModifiedTime().good()) {
+    context->validatorKind = "last-modified";
+    context->validator = headers->find(HttpHeader::LAST_MODIFIED);
+    if (context->validator.size() > 512)
+      return;
+  }
+  else
+    return;
+  context->sourceHash = sourceHash;
+  context->resourceHash = resourceHash;
+  context->outputPath = file->getPath();
+  context->totalLength = length;
+  group->setHttpResumeContext(context);
+  try {
+    // The group is already owned by the engine. Persist before the first
+    // payload write, so a crash cannot leave resumable bytes without their old
+    // identity.
+    auto owner = engine->getRequestGroupMan()->findGroup(group->getGID());
+    if (!owner)
+      throw DL_ABORT_EX("HTTP response has no durable task owner");
+    store->upsertTask(owner, false);
+  }
+  catch (...) {
+    group->setHttpResumeContext(nullptr);
+    throw;
+  }
+}
+#endif
 
 std::unique_ptr<StreamFilter> getTransferEncodingStreamFilter(
     HttpResponse* httpResponse,
@@ -207,6 +298,11 @@ bool HttpResponseCommand::executeInternal()
   auto grp = getRequestGroup();
   auto& fe = getFileEntry();
 
+  if (statusCode == 304 && grp->getHttpResumeContext()) {
+    throw DL_ABORT_EX2("HTTP continuation requires a payload response.",
+                       error_code::CANNOT_RESUME);
+  }
+
   if (statusCode == 304) {
     int64_t totalLength = httpResponse->getEntityLength();
     fe->setLength(totalLength);
@@ -240,7 +336,8 @@ bool HttpResponseCommand::executeInternal()
     // A zero redirect budget pins this request to its supplied resource.
     // HTTP Link mirrors would otherwise survive a rejected Location and
     // become retry candidates with an unrelated resource-scoped entity tag.
-    if (ctx->getAcceptMetalink() &&
+    if (ctx->getAcceptMetalink() && !grp->getHttpResumeContext() &&
+        !getOption()->getAsBool(PREF_HTTP_RESUME_CONTEXT) &&
         getOption()->getAsInt(PREF_MAX_HTTP_REDIRECT) > 0) {
       if (httpHeader->defined(HttpHeader::LINK)) {
         ctx->setAcceptMetalink(false);
@@ -278,6 +375,12 @@ bool HttpResponseCommand::executeInternal()
     }
     return skipResponseBody(std::move(httpResponse));
   }
+
+#ifdef HAVE_SQLITE3
+  // Runs before preDownloadProcessing, open/truncate and every payload writer.
+  bindHttpPayload(httpResponse.get(), grp, req.get(), fe.get(),
+                  getDownloadEngine());
+#endif
 
   // A successful (2xx) response breaks any run of 503s: the request object
   // is reused across retries, so without this a server that intermittently

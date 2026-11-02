@@ -46,7 +46,13 @@ async function engine(t,dir,{ sqlite=true, auth=true, bin, extra=[] }={}) {
     `--save-session=${dir}/session.txt`,'--force-save=true','--save-session-interval=1',`--enable-sqlite3-persistence=${sqlite}`,`--sqlite3-db-path=${dir}/session.db`,
     '--split=1','--max-connection-per-server=1','--max-tries=1','--seed-time=0','--pause=true',...extra,
   ]});t.after(()=>stopInstance(proc));const rpc=new Aria2Rpc({port:rpcPort,secret:auth?secret:''})
-  await until(()=>rpc.call('aria2.getVersion').catch(()=>null),Boolean)
+  let startupOutput=''
+  const collect=chunk=>{startupOutput=(startupOutput+chunk.toString()).slice(-4096)}
+  proc.stdout.on('data',collect);proc.stderr.on('data',collect)
+  await until(()=>{
+    if(proc.exitCode!==null||proc.signalCode!==null)assert.fail(`engine exited before RPC became ready: ${startupOutput}`)
+    return rpc.call('aria2.getVersion').catch(()=>null)
+  },Boolean)
   return {rpc,dir,listenPort,stop:async signal=>{
     if(signal==='graceful') {
       // Node SIGTERM terminates Windows processes; use the real shutdown RPC
@@ -508,12 +514,13 @@ describe('legacy checkpoint engine import',()=>{
     db(e,d=>d.exec('DROP TRIGGER reject_task'))
     assert.equal(await e.rpc.call('aria2.addLegacyTorrentV1',[state.activation]),state.req.gid)
   })
-  it('requires the new runtime capability and makes the previous binary refuse schema5',{skip:!previousBin},async t=>{
+  it('requires the new runtime capability and makes the previous binary refuse the current schema',{skip:!previousBin},async t=>{
     const old=await engine(t,`${root}/bt-old-capability`,{bin:previousBin})
     assert.ok(!(await old.rpc.call('aria2.getVersion')).enabledFeatures.includes('LegacyTorrentMetadataV1'))
     await assert.rejects(old.rpc.call('aria2.addLegacyTorrentV1',[{}]),/No such method|not found/)
     await old.stop()
-    const current=await engine(t,`${root}/bt-schema5`),state=await durableBtRequest(current,'downgrade')
+    const current=await engine(t,`${root}/bt-current-schema`),state=await durableBtRequest(current,'downgrade')
+    const currentSchema=db(current,d=>d.prepare('PRAGMA user_version').get().user_version)
     await current.rpc.call('aria2.addLegacyTorrentV1',[state.activation]);await current.stop()
     const durableBefore=db(current,d=>d.prepare('SELECT * FROM task').all())
     const receiptsBefore=db(current,d=>d.prepare('SELECT * FROM legacy_checkpoint_import').all())
@@ -522,20 +529,22 @@ describe('legacy checkpoint engine import',()=>{
     let output='';proc.stdout.on('data',b=>output+=b);proc.stderr.on('data',b=>output+=b)
     t.after(()=>stopInstance(proc))
     const code=await new Promise(r=>proc.once('exit',r));assert.notEqual(code,0)
-    assert.match(output,/schema version 5 is newer/s)
+    assert.match(output,new RegExp(`schema version ${currentSchema} is newer`,'s'))
     assert.ok(output.includes(`supports (${previousSchema})`),output)
     assert.deepEqual(db(current,d=>d.prepare('SELECT * FROM task').all()),durableBefore)
     assert.deepEqual(db(current,d=>d.prepare('SELECT * FROM legacy_checkpoint_import').all()),receiptsBefore)
     t.diagnostic(`schema${previousSchema} engine refused newer metadata grants without deleting tasks or receipts`)
   })
-  for(const version of [3,4]) it(`upgrades schema${version} with a complete WAL snapshot and preserves paused GIDs`,async t=>{
+  for(const version of [3,4,5]) it(`upgrades schema${version} with a complete WAL snapshot and preserves paused GIDs`,async t=>{
     const dir=`${root}/upgrade-v${version}`;let e=await engine(t,dir)
     const gid='abcdef0123456789'
     await e.rpc.call('aria2.addUri',[[url],{gid,pause:'true',dir,out:'upgrade.bin'}])
     await e.stop()
     const writer=new DatabaseSync(`${dir}/session.db`)
     t.after(()=>writer.close())
-    writer.exec(`PRAGMA wal_autocheckpoint=0; DROP TABLE legacy_torrent_metadata; ${version===3?'DROP TABLE legacy_checkpoint_file; DROP TABLE legacy_checkpoint_import;':''}
+    const currentSchema=writer.prepare('PRAGMA user_version').get().user_version
+    writer.exec(`PRAGMA wal_autocheckpoint=0; DROP TABLE task_http_context;
+      ${version<5?'DROP TABLE legacy_torrent_metadata;':''} ${version===3?'DROP TABLE legacy_checkpoint_file; DROP TABLE legacy_checkpoint_import;':''}
       CREATE TABLE upgrade_sentinel(value TEXT); INSERT INTO upgrade_sentinel VALUES('committed WAL');
       UPDATE meta SET value='${version}' WHERE key='schema_version'; PRAGMA user_version=${version};`)
     const tasks=writer.prepare('SELECT * FROM task').all()
@@ -544,7 +553,7 @@ describe('legacy checkpoint engine import',()=>{
     e=await engine(t,dir)
     assert.equal((await e.rpc.tellStatus(gid)).status,'paused')
     assert.equal(requests.length,beforeRequests)
-    const backups=(await readdir(dir)).filter(name=>name.startsWith(`session.db.pre-schema5-v${version}.`)&&name.endsWith('.db'))
+    const backups=(await readdir(dir)).filter(name=>name.startsWith(`session.db.pre-schema${currentSchema}-v${version}.`)&&name.endsWith('.db'))
     assert.equal(backups.length,1)
     const backup=new DatabaseSync(`${dir}/${backups[0]}`,{readOnly:true})
     try {
@@ -556,7 +565,7 @@ describe('legacy checkpoint engine import',()=>{
     } finally {backup.close()}
     await e.stop();e=await engine(t,dir)
     assert.equal((await e.rpc.tellStatus(gid)).status,'paused')
-    assert.equal((await readdir(dir)).filter(name=>name.startsWith('session.db.pre-schema5-')).length,1)
+    assert.equal((await readdir(dir)).filter(name=>name.startsWith(`session.db.pre-schema${currentSchema}-`)).length,1)
   })
   it('fills missing native v1 BT pieces from an isolated loopback aria2 seeder after explicit activation',{timeout:60000},async t=>{
     const e=await engine(t,`${root}/bt-peer-native/download`),seeder=await engine(t,`${root}/bt-peer-native/seed`)

@@ -75,9 +75,11 @@ records use `secure_delete=FAST`. Values are never copied into text sessions,
 download history, engine logs or `--save-cookies` output.
 
 On startup, aria2 restores the scoped jar before scheduling the task. Pause,
-retry and shutdown retain it. Normal completion, terminal failure, cancellation
-and explicit result removal delete the cookie context; deleting the task row
-also cascades to both cookie tables.
+retry and shutdown retain it. With `--force-save=true`, failed unfinished
+downloads retain their cookie context together with their task and checkpoint,
+including explicitly empty jars. Normal completion, cancellation and explicit
+result removal delete the cookie context; deleting the task row also cascades
+to both cookie tables.
 
 If SQLite persistence is disabled, or a marked task has no cookie context after
 database loss/corruption, it fails before making a network request. Restore it
@@ -87,6 +89,33 @@ including an empty jar, and durably updates SQLite when enabled. It is allowed
 only for waiting or paused tasks carrying the requirement marker. Active,
 stopped and ordinary legacy tasks are rejected. Pause an active task and wait
 for `status=paused` before refreshing its context.
+
+## Verified HTTP continuation
+
+Discover `aria2.getHttpRetryStatusV1` and `aria2.retryHttpDownloadV1` through
+`system.listMethods`; both require enabled SQLite persistence. Clients can opt
+new single-source HTTP downloads into `http-resume-context=true`. Before the
+first payload write, the engine binds a strong ETag (or valid Last-Modified and
+length), the final response URL hash, original source hash and output path.
+HTTP Link mirrors are disabled for this mode. Each subsequent payload response
+must match that binding, including after an engine restart.
+
+Both methods take `(gid, originalUri, outputPath)`. These are assertions about
+the original task, not overrides. `getHttpRetryStatusV1` returns
+`{ available: "true" | "false", reason: string }` without exposing cookies or
+other request credentials. `retryHttpDownloadV1` returns the original GID and
+continues its original file/checkpoint with its retained request and scoped jar.
+It commits the resumed task and retires stale error history before queueing it.
+Repeated calls acknowledge an already running or completed matching task.
+
+Retry requires a retained historical resource identity and checkpoint. It never
+uses a newly captured ETag to validate old bytes. Missing cookies, missing
+checkpoints, changed source/path, changed resources and unsupported Range
+responses cannot silently restart or overwrite the partial download. Old tasks
+without a binding need a separately verified recovery or an explicit fresh
+download. Completion and explicit task/result removal retire the binding.
+Retained failed tasks are restored paused, so restarting the engine does not
+automatically repeat the failed request.
 
 ## Legacy requests and redirects
 
@@ -104,7 +133,7 @@ or proxy policy in aria2.
 Run `make check`, then:
 
 ```sh
-ARIA2_E2E_BIN="$PWD/src/aria2c" node --test test/e2e/task-cookies.e2e.test.mjs
+ARIA2_E2E_BIN="$PWD/src/aria2c" node --test --test-concurrency=1 test/e2e/task-cookies.e2e.test.mjs test/e2e/http-retry.e2e.test.mjs
 ```
 
 The contract covers task isolation, scoped redirects, expiry, HTTPS downgrade,

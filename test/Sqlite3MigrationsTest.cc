@@ -19,6 +19,7 @@ class Sqlite3MigrationsTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testMigrateV2ToV3DetachesProgressFromTask);
   CPPUNIT_TEST(testMigrateV3ToV4PreservesProgress);
   CPPUNIT_TEST(testMigrateV4ToV5PreservesReceipt);
+  CPPUNIT_TEST(testMigrateV5ToV6PreservesCookieContext);
   CPPUNIT_TEST(testReopenIsIdempotent);
   CPPUNIT_TEST(testFutureVersionRejected);
   CPPUNIT_TEST_SUITE_END();
@@ -29,6 +30,7 @@ public:
   void testMigrateV2ToV3DetachesProgressFromTask();
   void testMigrateV3ToV4PreservesProgress();
   void testMigrateV4ToV5PreservesReceipt();
+  void testMigrateV5ToV6PreservesCookieContext();
   void testReopenIsIdempotent();
   void testFutureVersionRejected();
 };
@@ -61,7 +63,7 @@ void Sqlite3MigrationsTest::testMigrateFreshDbToV2() {
        {"task", "task_progress", "download_history", "download_history_files",
         "download_history_file_uris", "task_cookie_context", "task_cookie",
         "legacy_checkpoint_import", "legacy_checkpoint_file",
-        "legacy_torrent_metadata", "meta"}) {
+        "legacy_torrent_metadata", "task_http_context", "meta"}) {
     CPPUNIT_ASSERT_MESSAGE(std::string("missing table: ") + t,
                            std::find(names.begin(), names.end(), t) != names.end());
   }
@@ -76,7 +78,8 @@ void Sqlite3MigrationsTest::testMigrateExistingV1ToV2() {
     Sqlite3PersistenceStore store(path);
     store.open();
     sqlite3_exec(store.raw(),
-                 "DROP TABLE legacy_torrent_metadata; DROP TABLE "
+                 "DROP TABLE task_http_context; DROP TABLE "
+                 "legacy_torrent_metadata; DROP TABLE "
                  "legacy_checkpoint_file; DROP TABLE "
                  "legacy_checkpoint_import",
                  nullptr, nullptr, nullptr);
@@ -142,7 +145,8 @@ void Sqlite3MigrationsTest::testMigrateV2ToV3DetachesProgressFromTask() {
          "INSERT INTO task_progress(gid, piece_length, total_length, bitfield,"
          " digest, updated_at)"
          " VALUES ('00000000000000aa', 1024, 2048, X'80', X'', 1)");
-    exec(db, "DROP TABLE legacy_torrent_metadata; DROP TABLE "
+    exec(db, "DROP TABLE task_http_context; DROP TABLE "
+             "legacy_torrent_metadata; DROP TABLE "
              "legacy_checkpoint_file; DROP TABLE "
              "legacy_checkpoint_import");
     exec(db, "UPDATE meta SET value='2' WHERE key='schema_version'");
@@ -198,7 +202,8 @@ void Sqlite3MigrationsTest::testMigrateV3ToV4PreservesProgress()
     CPPUNIT_ASSERT_EQUAL(
         SQLITE_OK,
         sqlite3_exec(store.raw(),
-                     "DROP TABLE legacy_torrent_metadata; DROP TABLE "
+                     "DROP TABLE task_http_context; DROP TABLE "
+                     "legacy_torrent_metadata; DROP TABLE "
                      "legacy_checkpoint_file; DROP TABLE "
                      "legacy_checkpoint_import;"
                      "INSERT INTO task (gid, state, serialized, "
@@ -269,7 +274,7 @@ void Sqlite3MigrationsTest::testMigrateV4ToV5PreservesReceipt()
         SQLITE_OK,
         sqlite3_exec(
             store.raw(),
-            "DROP TABLE legacy_torrent_metadata;"
+            "DROP TABLE task_http_context; DROP TABLE legacy_torrent_metadata;"
             "INSERT INTO task (gid,state,serialized,metadata_uri,"
             "bt_local_path,queue_position,digest,created_at,updated_at) "
             "VALUES ('00000000000000aa','paused','durable task',"
@@ -295,7 +300,8 @@ void Sqlite3MigrationsTest::testMigrateV4ToV5PreservesReceipt()
   }
   Sqlite3PersistenceStore store(path);
   store.open();
-  CPPUNIT_ASSERT_EQUAL(std::string("5"), store.queryPragma("user_version"));
+  CPPUNIT_ASSERT_EQUAL(std::to_string(kCurrentSchemaVersion),
+                       store.queryPragma("user_version"));
   sqlite3_stmt* stmt = nullptr;
   CPPUNIT_ASSERT_EQUAL(
       SQLITE_OK,
@@ -341,6 +347,46 @@ void Sqlite3MigrationsTest::testMigrateV4ToV5PreservesReceipt()
   auto names = tableNames(store);
   CPPUNIT_ASSERT(std::find(names.begin(), names.end(),
                            "legacy_torrent_metadata") != names.end());
+}
+
+void Sqlite3MigrationsTest::testMigrateV5ToV6PreservesCookieContext()
+{
+  std::string path = std::string(A2_TEST_OUT_DIR) + "/test_migrate_v5_v6.db";
+  std::remove(path.c_str());
+  {
+    Sqlite3PersistenceStore original(path);
+    original.open();
+    CPPUNIT_ASSERT_EQUAL(
+        SQLITE_OK,
+        sqlite3_exec(
+            original.raw(),
+            "DROP TABLE task_http_context;"
+            "INSERT INTO task "
+            "(gid,state,serialized,queue_position,digest,created_at,updated_at)"
+            " VALUES ('00000000000000aa','paused','old request',0,X'',1,1);"
+            "INSERT INTO task_cookie_context VALUES ('00000000000000aa',1);"
+            "UPDATE meta SET value='5' WHERE key='schema_version'; PRAGMA "
+            "user_version=5;",
+            nullptr, nullptr, nullptr));
+  }
+  Sqlite3PersistenceStore upgraded(path);
+  upgraded.open();
+  sqlite3_stmt* stmt = nullptr;
+  CPPUNIT_ASSERT_EQUAL(
+      SQLITE_OK,
+      sqlite3_prepare_v2(
+          upgraded.raw(),
+          "SELECT (SELECT count(*) FROM task_cookie_context),"
+          " (SELECT count(*) FROM task_http_context), serialized FROM task",
+          -1, &stmt, nullptr));
+  CPPUNIT_ASSERT_EQUAL(SQLITE_ROW, sqlite3_step(stmt));
+  CPPUNIT_ASSERT_EQUAL(1, sqlite3_column_int(stmt, 0));
+  // Upgrading cannot manufacture a historical identity for existing bytes.
+  CPPUNIT_ASSERT_EQUAL(0, sqlite3_column_int(stmt, 1));
+  CPPUNIT_ASSERT_EQUAL(
+      std::string("old request"),
+      std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2))));
+  sqlite3_finalize(stmt);
 }
 
 void Sqlite3MigrationsTest::testReopenIsIdempotent() {

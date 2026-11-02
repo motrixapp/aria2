@@ -113,7 +113,7 @@ jobs:
     - name: Verify task cookies and credential redirects
       env:
         ARIA2_E2E_BIN: ${{ github.workspace }}/src/aria2c
-      run: node --test test/e2e/task-cookies.e2e.test.mjs
+      run: node --test --test-concurrency=1 test/e2e/task-cookies.e2e.test.mjs test/e2e/http-retry.e2e.test.mjs
     - name: Verify select DNS retransmission, failover and exhaustion
       env:
         ARIA2_E2E_BIN: ${{ github.workspace }}/src/aria2c
@@ -223,7 +223,7 @@ jobs:
     - name: Verify task cookies and credential redirects
       env:
         ARIA2_E2E_BIN: ${{ github.workspace }}\bin\aria2c.exe
-      run: node --test test/e2e/task-cookies.e2e.test.mjs
+      run: node --test --test-concurrency=1 test/e2e/task-cookies.e2e.test.mjs test/e2e/http-retry.e2e.test.mjs
     - name: Verify select DNS retransmission, failover and exhaustion
       env:
         ARIA2_E2E_BIN: ${{ github.workspace }}\bin\aria2c.exe
