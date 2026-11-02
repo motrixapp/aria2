@@ -98,6 +98,10 @@ public:
   // Appends dr to the pending-retry queue.  If the queue exceeds
   // kMaxPendingWrites entries the oldest entry is dropped to bound growth.
   void enqueuePending(const std::shared_ptr<DownloadResult>& dr);
+  std::shared_ptr<GroupId> retainPendingGroupId(a2_gid_t gid) const;
+  void forgetPendingResult(a2_gid_t gid);
+  std::vector<a2_gid_t> pendingGids() const;
+  void forgetPendingResults() { pendingHistoryWrites_.clear(); }
 
   // Returns total count of rows in download_history.
   int64_t countAll() const;

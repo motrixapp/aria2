@@ -411,7 +411,7 @@ jobs:
           echo "ARIA2_E2E_BIN=$GITHUB_WORKSPACE/bin/aria2c" >> "$GITHUB_ENV"
         fi
     - name: Verify task cookies and credential redirects
-      run: node --test test/e2e/task-cookies.e2e.test.mjs
+      run: node --test --test-concurrency=1 test/e2e/task-cookies.e2e.test.mjs test/e2e/http-retry.e2e.test.mjs
 
   legacy-checkpoint-contract:
     needs: [macos, windows, linux]

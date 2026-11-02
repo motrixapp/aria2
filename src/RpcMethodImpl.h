@@ -627,6 +627,26 @@ public:
 // from whichever store it reads: aria2.db under sqlite3 persistence, or the
 // `<path>.aria2` control file otherwise. A front-end asks before retrying a
 // partial download instead of reaching into either store itself.
+#ifdef HAVE_SQLITE3
+class GetHttpRetryStatusV1RpcMethod : public RpcMethod {
+protected:
+  std::unique_ptr<ValueBase> process(const RpcRequest& req,
+                                     DownloadEngine* e) CXX11_OVERRIDE;
+
+public:
+  static const char* getMethodName() { return "aria2.getHttpRetryStatusV1"; }
+};
+
+class RetryHttpDownloadV1RpcMethod : public RpcMethod {
+protected:
+  std::unique_ptr<ValueBase> process(const RpcRequest& req,
+                                     DownloadEngine* e) CXX11_OVERRIDE;
+
+public:
+  static const char* getMethodName() { return "aria2.retryHttpDownloadV1"; }
+};
+#endif
+
 class GetCheckpointStatusRpcMethod : public RpcMethod {
 protected:
   virtual std::unique_ptr<ValueBase> process(const RpcRequest& req,

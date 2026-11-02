@@ -68,6 +68,15 @@ class Option;
 class RequestGroup;
 class CheckIntegrityEntry;
 struct DownloadResult;
+// Captured from an actual HTTP payload response before any bytes are written.
+struct HttpResumeContext {
+  std::string sourceHash;
+  std::string resourceHash;
+  std::string outputPath;
+  std::string validatorKind;
+  std::string validator;
+  int64_t totalLength = 0;
+};
 class URISelector;
 class URIResult;
 class RequestGroupMan;
@@ -99,6 +108,7 @@ private:
   a2_gid_t belongsToGID_;
 
   std::shared_ptr<GroupId> gid_;
+  std::shared_ptr<HttpResumeContext> httpResumeContext_;
 
   std::shared_ptr<Option> option_;
 
@@ -288,6 +298,16 @@ public:
   a2_gid_t getGID() const { return gid_->getNumericId(); }
 
   const std::shared_ptr<GroupId>& getGroupId() const { return gid_; }
+  // Only for an unqueued retry candidate; share the stopped owner's ID.
+  void adoptRetryGroupId(const std::shared_ptr<GroupId>& gid) { gid_ = gid; }
+  const std::shared_ptr<HttpResumeContext>& getHttpResumeContext() const
+  {
+    return httpResumeContext_;
+  }
+  void setHttpResumeContext(std::shared_ptr<HttpResumeContext> context)
+  {
+    httpResumeContext_ = std::move(context);
+  }
 
   TransferStat calculateStat() const;
 

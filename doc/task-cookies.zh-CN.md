@@ -62,8 +62,9 @@ Cookie value 以明文存放在本机 SQLite 数据库中，也可能短暂出�
 `secure_delete=FAST`。Cookie value 不会复制到文本 session、下载历史、引擎日志或
 `--save-cookies` 输出。
 
-启动时，aria2 在调度任务前恢复该任务的独立 jar。暂停、重试和引擎退出会保留；正常
-完成、终止错误、取消和显式删除结果会清理 Cookie 上下文；删除 task 行也会通过外键
+启动时，aria2 在调度任务前恢复该任务的独立 jar。暂停、重试和引擎退出会保留。
+启用 `--force-save=true` 时，未完成的失败任务会连同任务记录和断点保留 Cookie 上下文，
+包括显式空 jar。正常完成、取消和显式删除结果会清理 Cookie 上下文；删除 task 行也会通过外键
 级联清理两个 Cookie 表。
 
 未启用 SQLite，或数据库丢失、损坏后带标记的任务没有 Cookie 上下文时，任务仍会在
@@ -72,6 +73,26 @@ Cookie value 以明文存放在本机 SQLite 数据库中，也可能短暂出�
 `setTaskCookies` 会原子替换整个 jar，也接受空数组；启用 SQLite 时会同时持久化。它只
 允许用于带标记的等待中或已暂停任务；活动任务、已停止任务和普通旧任务会被拒绝。刷新
 活动任务前，先暂停并等待 `status=paused`。
+
+## 校验后的 HTTP 续传
+
+通过 `system.listMethods` 检测 `aria2.getHttpRetryStatusV1` 和
+`aria2.retryHttpDownloadV1`，两者都要求启用 SQLite 持久化。客户端可以为新建的单来源
+HTTP 任务设置 `http-resume-context=true`。引擎会在首次写入下载内容前记录强 ETag
+（或有效的 Last-Modified 与长度）、最终响应 URL 的哈希、原来源哈希和输出路径。
+该模式不使用 HTTP Link 镜像。之后的每个下载内容响应都必须匹配这份记录，包括引擎重启后。
+
+两个方法都接受 `(gid, originalUri, outputPath)`，用于核对原任务，不能覆盖来源或路径。
+`getHttpRetryStatusV1` 返回 `{ available: "true" | "false", reason: string }`，
+不会返回 Cookie 或其他请求凭证。`retryHttpDownloadV1` 返回原 GID，使用保留的请求、
+独立 Cookie 存储和断点继续下载原文件。引擎会先持久化恢复状态并清理旧错误历史，再将任务
+重新入队。重复调用会确认已经运行或完成的匹配任务，不会再次创建下载。
+
+续传要求保留的历史资源校验信息和断点，不会把新获取的 ETag 当作旧内容的身份凭据。
+Cookie、断点缺失，来源、路径或资源变化，或服务器不支持 Range，都不能静默清空并重下
+部分文件。缺少历史校验信息的旧任务需要单独验证恢复，或明确选择重新下载。
+完成任务、删除任务或清理结果时会清理资源绑定。保留的失败任务会以暂停状态恢复，
+引擎重启不会自动重复失败请求。
 
 ## 旧接口与重定向
 
@@ -86,7 +107,7 @@ Cookie value 以明文存放在本机 SQLite 数据库中，也可能短暂出�
 运行 `make check` 后执行：
 
 ```sh
-ARIA2_E2E_BIN="$PWD/src/aria2c" node --test test/e2e/task-cookies.e2e.test.mjs
+ARIA2_E2E_BIN="$PWD/src/aria2c" node --test --test-concurrency=1 test/e2e/task-cookies.e2e.test.mjs test/e2e/http-retry.e2e.test.mjs
 ```
 
 测试覆盖任务隔离、重定向作用域、过期时间、HTTPS 降级、固定请求头、非法输入、Range

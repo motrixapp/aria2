@@ -893,6 +893,36 @@ Sqlite3DownloadResultRepository::fetchByGid(a2_gid_t gid) const
   return dr;
 }
 
+std::shared_ptr<GroupId>
+Sqlite3DownloadResultRepository::retainPendingGroupId(a2_gid_t gid) const
+{
+  for (const auto& dr : pendingHistoryWrites_) {
+    if (dr->gid && dr->gid->getNumericId() == gid)
+      return dr->gid;
+  }
+  return nullptr;
+}
+
+std::vector<a2_gid_t> Sqlite3DownloadResultRepository::pendingGids() const
+{
+  std::vector<a2_gid_t> gids;
+  for (const auto& dr : pendingHistoryWrites_) {
+    if (dr->gid)
+      gids.push_back(dr->gid->getNumericId());
+  }
+  return gids;
+}
+
+void Sqlite3DownloadResultRepository::forgetPendingResult(a2_gid_t gid)
+{
+  pendingHistoryWrites_.erase(
+      std::remove_if(pendingHistoryWrites_.begin(), pendingHistoryWrites_.end(),
+                     [gid](const std::shared_ptr<DownloadResult>& dr) {
+                       return dr->gid && dr->gid->getNumericId() == gid;
+                     }),
+      pendingHistoryWrites_.end());
+}
+
 bool Sqlite3DownloadResultRepository::deleteByGid(a2_gid_t gid)
 {
   bool deleted = false;

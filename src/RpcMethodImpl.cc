@@ -1642,6 +1642,153 @@ GetGlobalStatRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
   return std::move(res);
 }
 
+#ifdef HAVE_SQLITE3
+namespace {
+struct HttpRetryCandidate {
+  std::shared_ptr<RequestGroup> group;
+  std::string reason;
+  bool live = false;
+};
+
+HttpRetryCandidate inspectHttpRetry(DownloadEngine* e, a2_gid_t gid,
+                                    const std::string& source,
+                                    const std::string& output, bool retainOwner)
+{
+  auto* store = e->getSqlite3SessionStore();
+  if (!store)
+    return {nullptr, "unsupported", false};
+  if (source.compare(0, 7, "http://") != 0 &&
+      source.compare(0, 8, "https://") != 0) {
+    return {nullptr, "unsupported-source", false};
+  }
+  const auto& manager = e->getRequestGroupMan();
+  auto group = manager->findGroup(gid);
+  const bool live = !!group;
+  if (!group) {
+    auto completed = manager->findDownloadResult(gid);
+    if (!completed && manager->getRepository())
+      completed = manager->getRepository()->fetchByGid(gid);
+    if (completed && completed->result == error_code::FINISHED &&
+        completed->fileEntries.size() == 1 &&
+        completed->fileEntries[0]->getPath() == output) {
+      const auto uris = completed->fileEntries[0]->getUris();
+      if (std::find(uris.begin(), uris.end(), source) != uris.end()) {
+        return {nullptr, "already-complete", false};
+      }
+    }
+    completed.reset();
+    auto owner = retainOwner ? manager->retainStoppedGroupId(gid)
+                             : GroupId::importTransient(gid);
+    if (!owner)
+      return {nullptr, "identity-busy", false};
+    group =
+        store->loadHttpRetry(owner, std::make_shared<Option>(*e->getOption()));
+  }
+  if (!group || !group->getHttpResumeContext()) {
+    return {nullptr, "resource-identity-missing", live};
+  }
+  const auto& context = group->getHttpResumeContext();
+  const auto& files = group->getDownloadContext()->getFileEntries();
+  if (files.size() != 1 || context->outputPath != output ||
+      files[0]->getPath() != output ||
+      context->sourceHash != Sqlite3SessionStore::httpUriHash(source)) {
+    return {nullptr, "binding-mismatch", live};
+  }
+  const auto uris = files[0]->getUris();
+  if (uris.empty() ||
+      std::any_of(uris.begin(), uris.end(), [&](const std::string& uri) {
+        return Sqlite3SessionStore::httpUriHash(uri) != context->sourceHash;
+      }))
+    return {nullptr, "binding-mismatch", live};
+  if (group->getOption()->getAsBool(PREF_REQUIRE_TASK_COOKIES) &&
+      !group->getTaskCookieStorage()) {
+    return {nullptr, "cookie-context-missing", live};
+  }
+  File file(output);
+  if (!file.isFile() || file.size() <= 0 ||
+      file.size() > context->totalLength) {
+    return {nullptr, "partial-file-unavailable", live};
+  }
+  if ((!live || group->isPauseRequested()) &&
+      !hasCheckpointForPath(output, e)) {
+    return {nullptr, "checkpoint-missing", live};
+  }
+  return {group, "ready", live};
+}
+
+a2_gid_t httpRetryGid(const std::string& value)
+{
+  a2_gid_t gid = 0;
+  if (GroupId::toNumericId(gid, value.c_str()) != 0) {
+    throw DL_ABORT_EX("Invalid HTTP retry GID");
+  }
+  return gid;
+}
+
+std::string httpRetryPath(std::string value)
+{
+#  ifdef __MINGW32__
+  std::replace(value.begin(), value.end(), '\\', '/');
+#  endif
+  return value;
+}
+} // namespace
+
+std::unique_ptr<ValueBase>
+GetHttpRetryStatusV1RpcMethod::process(const RpcRequest& req, DownloadEngine* e)
+{
+  auto gid = httpRetryGid(checkRequiredParam<String>(req, 0)->s());
+  const auto& source = checkRequiredParam<String>(req, 1)->s();
+  const auto output = httpRetryPath(checkRequiredParam<String>(req, 2)->s());
+  const auto candidate = inspectHttpRetry(e, gid, source, output, false);
+  auto result = Dict::g();
+  result->put("available",
+              candidate.group || candidate.reason == "already-complete"
+                  ? VLB_TRUE
+                  : VLB_FALSE);
+  result->put("reason", candidate.reason);
+  return std::move(result);
+}
+
+std::unique_ptr<ValueBase>
+RetryHttpDownloadV1RpcMethod::process(const RpcRequest& req, DownloadEngine* e)
+{
+  auto gid = httpRetryGid(checkRequiredParam<String>(req, 0)->s());
+  const auto& source = checkRequiredParam<String>(req, 1)->s();
+  const auto output = httpRetryPath(checkRequiredParam<String>(req, 2)->s());
+  const auto candidate = inspectHttpRetry(e, gid, source, output, true);
+  if (candidate.reason == "already-complete")
+    return createGIDResponse(gid);
+  if (!candidate.group) {
+    throw DL_ABORT_EX(
+        fmt("HTTP retry unavailable: %s", candidate.reason.c_str()));
+  }
+  auto group = candidate.group;
+  if (candidate.live && !group->isPauseRequested()) {
+    // A lost RPC response must not insert another writer for this GID.
+    return createGIDResponse(gid);
+  }
+  const bool paused = group->isPauseRequested();
+  const Option previousOptions(*group->getOption());
+  Sqlite3SessionStore::constrainHttpRetryOptions(*group->getOption());
+  group->setPauseRequested(false);
+  try {
+    e->getSqlite3SessionStore()->commitHttpRetry(group);
+  }
+  catch (...) {
+    group->setPauseRequested(paused);
+    *group->getOption() = previousOptions;
+    throw;
+  }
+  e->getRequestGroupMan()->forgetStoppedResult(gid);
+  if (!candidate.live) {
+    e->getRequestGroupMan()->addReservedGroup(group);
+  }
+  e->getRequestGroupMan()->requestQueueCheck();
+  return createGIDResponse(gid);
+}
+#endif
+
 std::unique_ptr<ValueBase>
 GetCheckpointStatusRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
 {
@@ -2124,9 +2271,10 @@ SystemListMethodsRpcMethod::process(const RpcRequest& req, DownloadEngine* e)
       // Spec §8.9: SQLite-only methods are not advertised when the
       // runtime flag is off, even if the build supports SQLite3.
       if (s == "aria2.getDownloadResultCount" ||
-          s == "aria2.searchDownloadResult" ||
-          s == "aria2.exportSession" ||
-          s == "aria2.requeueDownloadResult") {
+          s == "aria2.searchDownloadResult" || s == "aria2.exportSession" ||
+          s == "aria2.requeueDownloadResult" ||
+          s == "aria2.getHttpRetryStatusV1" ||
+          s == "aria2.retryHttpDownloadV1") {
         continue;
       }
     }

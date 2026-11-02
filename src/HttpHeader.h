@@ -83,6 +83,7 @@ public:
     CONTENT_RANGE,
     CONTENT_TYPE,
     DIGEST,
+    ETAG,
     INFOHASH, // Used for BitTorrent LPD
     LAST_MODIFIED,
     LINK,

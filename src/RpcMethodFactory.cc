@@ -100,6 +100,8 @@ std::vector<std::string> rpcMethodNames = {
     "aria2.searchDownloadResult",
     "aria2.exportSession",
     "aria2.requeueDownloadResult",
+    "aria2.getHttpRetryStatusV1",
+    "aria2.retryHttpDownloadV1",
 #endif // HAVE_SQLITE3
     "system.multicall",
     "system.listMethods",
@@ -301,6 +303,12 @@ std::unique_ptr<RpcMethod> createMethod(const std::string& methodName)
   }
   if (methodName == RequeueDownloadResultRpcMethod::getMethodName()) {
     return make_unique<RequeueDownloadResultRpcMethod>();
+  }
+  if (methodName == GetHttpRetryStatusV1RpcMethod::getMethodName()) {
+    return make_unique<GetHttpRetryStatusV1RpcMethod>();
+  }
+  if (methodName == RetryHttpDownloadV1RpcMethod::getMethodName()) {
+    return make_unique<RetryHttpDownloadV1RpcMethod>();
   }
 #endif // HAVE_SQLITE3
 

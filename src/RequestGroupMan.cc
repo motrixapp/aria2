@@ -503,12 +503,22 @@ public:
               ss->deleteTask(GroupId::toHex(group->getGID()));
             }
             else {
-              if (group->getHaltReason() != RequestGroup::SHUTDOWN_SIGNAL) {
-                // A normal completion or terminal error may keep its task row
-                // under --force-save, but no longer needs reusable
-                // credentials. Shutdown is different: it represents an
-                // in-flight task that must resume with the same jar.
+              if (dr->result == error_code::FINISHED) {
+                // A completed download no longer needs reusable credentials.
+                // Failed unfinished downloads retain their task and checkpoint
+                // under --force-save, so keep their isolated jar for retry too.
+                // Explicit removal deletes the task and cascades above.
                 ss->deleteTaskCookies(GroupId::toHex(group->getGID()));
+                ss->deleteHttpResumeContext(GroupId::toHex(group->getGID()));
+              }
+              else if (group->getHaltReason() !=
+                           RequestGroup::SHUTDOWN_SIGNAL &&
+                       (group->getOption()->getAsBool(
+                            PREF_HTTP_RESUME_CONTEXT) ||
+                        group->getOption()->getAsBool(
+                            PREF_REQUIRE_TASK_COOKIES) ||
+                        group->getHttpResumeContext())) {
+                ss->retainFailedHttpTask(group);
               }
               // Force-save preserves the `task` row across this
               // transition; we must also flush the FINAL BT progress
@@ -536,7 +546,8 @@ public:
             }
           }
           catch (RecoverableException& ex) {
-            A2_LOG_ERROR_EX("sqlite3-persistence: deleteTask failed", ex);
+            A2_LOG_ERROR_EX(
+                "sqlite3-persistence: stopped task persistence failed", ex);
           }
         }
 #endif // HAVE_SQLITE3
@@ -1022,6 +1033,40 @@ RequestGroupMan::findDownloadResult(a2_gid_t gid) const
   return downloadResults_.get(gid);
 }
 
+std::shared_ptr<GroupId>
+RequestGroupMan::retainStoppedGroupId(a2_gid_t gid) const
+{
+  if (auto dr = downloadResults_.get(gid))
+    return dr->gid;
+  for (const auto& dr : unfinishedDownloadResults_) {
+    if (dr->gid && dr->gid->getNumericId() == gid)
+      return dr->gid;
+  }
+#ifdef HAVE_SQLITE3
+  if (repo_) {
+    if (auto owner = repo_->retainPendingGroupId(gid))
+      return owner;
+  }
+#endif
+  return GroupId::import(gid);
+}
+
+void RequestGroupMan::forgetStoppedResult(a2_gid_t gid)
+{
+  downloadResults_.remove(gid);
+  unfinishedDownloadResults_.erase(
+      std::remove_if(unfinishedDownloadResults_.begin(),
+                     unfinishedDownloadResults_.end(),
+                     [gid](const std::shared_ptr<DownloadResult>& dr) {
+                       return dr->gid && dr->gid->getNumericId() == gid;
+                     }),
+      unfinishedDownloadResults_.end());
+#ifdef HAVE_SQLITE3
+  if (repo_)
+    repo_->forgetPendingResult(gid);
+#endif
+}
+
 RequestGroupMan::RemoveResult
 RequestGroupMan::removeDownloadResult(a2_gid_t gid)
 {
@@ -1077,9 +1122,11 @@ RequestGroupMan::removeDownloadResult(a2_gid_t gid)
   if (storeFailed) {
     return RemoveResult::FAILED;
   }
+  forgetStoppedResult(gid);
   return memSuccess || dbSuccess ? RemoveResult::REMOVED
                                  : RemoveResult::NOT_FOUND;
 #else
+  forgetStoppedResult(gid);
   return memSuccess ? RemoveResult::REMOVED : RemoveResult::NOT_FOUND;
 #endif
 }
@@ -1137,49 +1184,34 @@ void RequestGroupMan::addDownloadResult(
 void RequestGroupMan::purgeDownloadResult()
 {
 #ifdef HAVE_SQLITE3
-  // Snapshot every gid that's about to be cleared so we can prune the
-  // matching `task` rows. With `--force-save=true` those rows survive
-  // the active→stopped transition; purging only download_history but
-  // leaving `task` behind would let the gids resurrect on restart.
-  std::vector<a2_gid_t> purgedGids;
   if (sessionStore_) {
-    purgedGids.reserve(downloadResults_.size() +
-                       unfinishedDownloadResults_.size());
-    for (const auto& dr : downloadResults_) {
-      if (dr && dr->gid) {
-        purgedGids.push_back(dr->gid->getNumericId());
-      }
+    std::vector<a2_gid_t> liveGids, stoppedGids;
+    for (const auto& group : requestGroups_)
+      liveGids.push_back(group->getGID());
+    for (const auto& group : reservedGroups_)
+      liveGids.push_back(group->getGID());
+    for (const auto& dr : downloadResults_)
+      if (dr && dr->gid)
+        stoppedGids.push_back(dr->gid->getNumericId());
+    for (const auto& dr : unfinishedDownloadResults_)
+      if (dr && dr->gid)
+        stoppedGids.push_back(dr->gid->getNumericId());
+    if (repo_) {
+      const auto pending = repo_->pendingGids();
+      stoppedGids.insert(stoppedGids.end(), pending.begin(), pending.end());
     }
-    for (const auto& dr : unfinishedDownloadResults_) {
-      if (dr && dr->gid) {
-        purgedGids.push_back(dr->gid->getNumericId());
-      }
-    }
+    // Do not mutate RAM or acknowledge cleanup until every durable delete has
+    // committed. A failure leaves all owners available for an explicit retry.
+    sessionStore_->purgeStoppedTasks(liveGids, stoppedGids);
+    if (repo_)
+      repo_->forgetPendingResults();
   }
-#endif // HAVE_SQLITE3
-
-  downloadResults_.clear();
-#ifdef HAVE_SQLITE3
-  if (repo_) {
-    try {
-      repo_->purgeAll();
-    }
-    catch (RecoverableException&) {
-    }
-  }
-  if (sessionStore_) {
-    for (auto gid : purgedGids) {
-      try {
-        sessionStore_->deleteTask(GroupId::toHex(gid));
-      }
-      catch (RecoverableException& ex) {
-        A2_LOG_ERROR_EX(
-            "sqlite3-persistence: deleteTask in purgeDownloadResult failed",
-            ex);
-      }
-    }
+  else if (repo_) {
+    repo_->purgeAll();
   }
 #endif
+  downloadResults_.clear();
+  unfinishedDownloadResults_.clear();
 }
 
 std::vector<std::shared_ptr<DownloadResult>>

@@ -407,6 +407,7 @@ PrefPtr PREF_USER_AGENT = makePref("user-agent");
 // value: string that your file system recognizes as a file name.
 PrefPtr PREF_LOAD_COOKIES = makePref("load-cookies");
 PrefPtr PREF_REQUIRE_TASK_COOKIES = makePref("require-task-cookies");
+PrefPtr PREF_HTTP_RESUME_CONTEXT = makePref("http-resume-context");
 // value: string that your file system recognizes as a file name.
 PrefPtr PREF_SAVE_COOKIES = makePref("save-cookies");
 // values: true | false
