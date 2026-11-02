@@ -7,7 +7,7 @@ on:
     inputs:
       version:
         description: 'Version for a dry run (no leading v)'
-        default: '1.37.0-motrix.21-dev'
+        default: '1.37.0-motrix.22-dev'
 
 permissions:
   contents: write
@@ -578,18 +578,24 @@ jobs:
           'aria2 fork build for Motrix. Base: upstream 1.37.0.' \
           '' \
           'Highlights:' \
+          '- Retain failed unfinished HTTP task cookies, including explicitly empty cookie contexts, across engine restarts.' \
+          '- Resume an opted-in HTTP task with its original GID, checkpoint, request options and task-scoped cookies through versioned RPCs.' \
+          '- Verify the original source, output path and persisted resource validators before reusing partial data; refuse unverifiable or changed resources.' \
+          '- Keep failure cleanup, explicit removal and history purge consistent across memory and SQLite transactions.' \
+          '- Reject invalid torrent piece lengths and guard input-file line reads against empty strings.' \
           '- Restore select-loop DNS retransmission, server failover and timeout reporting without changing DNS defaults.' \
           '- Verify DNS packet loss and unreachable servers on Windows x64, ia32 and ARM64 release binaries.' \
           '- Import native Motrix v1 .aria2 checkpoints with authenticated, idempotent RPCs.' \
           '- Persist paused BT recovery with the original GID, verified metadata and crash-safe SQLite transactions.' \
-          '- Preserve a complete SQLite backup, including committed WAL pages, before upgrading an existing schema to 5.' \
+          '- Preserve a complete SQLite backup, including committed WAL pages, before upgrading an existing schema to 6.' \
           '- Gate macOS, Windows and Linux migration recovery against the release binaries and the Motrix application.' \
           '- Add native Windows ARM64 binaries using LLVM-MinGW/UCRT and static OpenSSL.' \
           '- Gate Windows ARM64 with native HTTPS, long-path, WebSocket, cookie and legacy-recovery checks.' \
           '- Retain task-scoped cookies, cross-origin credential isolation and long-path support.' \
           '' \
           'Compatibility:' \
-          '- Schema 5 cannot be opened by older engines. Downgrades require the pre-upgrade backup; do not delete or reset the upgraded database.' \
+          '- Schema 6 cannot be opened by older engines. Downgrades require the pre-upgrade backup; do not delete or reset the upgraded database.' \
+          '- Native HTTP retry requires enabled SQLite persistence, a supporting client, and historical context captured for an opted-in task. Previously deleted cookies or missing historical validators cannot be reconstructed.' \
           '- BT activation verifies pieces and may write shared-piece bytes in an unselected adjacent file; zero upload is not guaranteed.' \
           '' \
           'All attached archives are covered by SHA256SUMS.' \
