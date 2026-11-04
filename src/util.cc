@@ -2162,18 +2162,20 @@ bool saveAs(const std::string& filename, const std::string& data,
   return File(tempFilename).renameTo(filename);
 }
 
-std::string applyDir(const std::string& dir, const std::string& relPath)
+std::string applyDir(const std::string& dir, const std::string& relPath,
+                     bool allowAbsolutePath)
 {
   std::string s;
-  if (!relPath.empty() && relPath[0] == '/') {
+  if (allowAbsolutePath && !relPath.empty() && relPath[0] == '/') {
     s = relPath;
   }
 #ifdef __MINGW32__
-  else if (relPath.size() >= 3 && util::isAlpha(relPath[0]) &&
+  else if (allowAbsolutePath && relPath.size() >= 3 &&
+           util::isAlpha(relPath[0]) &&
            relPath[1] == ':' && (relPath[2] == '/' || relPath[2] == '\\')) {
     s = relPath;
   }
-  else if (relPath.size() >= 2 &&
+  else if (allowAbsolutePath && relPath.size() >= 2 &&
            ((relPath[0] == '/' && relPath[1] == '/') ||
             (relPath[0] == '\\' && relPath[1] == '\\'))) {
     s = relPath;

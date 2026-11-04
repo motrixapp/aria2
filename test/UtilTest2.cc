@@ -786,6 +786,16 @@ void UtilTest2::testApplyDir()
   CPPUNIT_ASSERT_EQUAL(std::string("/pred"), util::applyDir("/", "pred"));
   CPPUNIT_ASSERT_EQUAL(std::string("./pred"), util::applyDir(".", "pred"));
   CPPUNIT_ASSERT_EQUAL(std::string("/dl/pred"), util::applyDir("/dl", "pred"));
+  CPPUNIT_ASSERT_EQUAL(std::string("/dl/album/file"),
+                       util::applyDir("/dl", "album/file", false));
+  CPPUNIT_ASSERT_EQUAL(std::string("/dl//album/file"),
+                       util::applyDir("/dl", "/album/file", false));
+  CPPUNIT_ASSERT_EQUAL(std::string("/dl///album/file"),
+                       util::applyDir("/dl", "//album/file", false));
+  CPPUNIT_ASSERT_EQUAL(std::string(".//album/file"),
+                       util::applyDir("", "/album/file", false));
+  CPPUNIT_ASSERT_EQUAL(std::string("//album/file"),
+                       util::applyDir("/", "/album/file", false));
 #ifndef __MINGW32__
   CPPUNIT_ASSERT_EQUAL(std::string("/dev/null"),
                        util::applyDir(".", "/dev/null"));

@@ -2383,7 +2383,8 @@ void changeOption(const std::shared_ptr<RequestGroup>& group,
 
       if (!grOption->blank(PREF_OUT)) {
         fileEntry->setPath(
-            util::applyDir(grOption->get(PREF_DIR), grOption->get(PREF_OUT)));
+            util::applyDir(grOption->get(PREF_DIR), grOption->get(PREF_OUT),
+                           false));
         fileEntry->setSuffixPath(A2STR::NIL);
       }
       else if (fileEntry->getSuffixPath().empty()) {

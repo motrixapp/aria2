@@ -732,11 +732,14 @@ bool saveAs(const std::string& filename, const std::string& data,
             bool overwrite = false);
 
 // Prepend dir to relPath. If dir is empty, it prepends "." to relPath.
+// Absolute paths bypass dir unless allowAbsolutePath is false. HTTP/FTP
+// --out uses false to retain upstream aria2's directory-relative semantics.
 //
 // dir = "/dir", relPath = "foo" => "/dir/foo"
 // dir = "",     relPath = "foo" => "./foo"
 // dir = "/",    relPath = "foo" => "/foo"
-std::string applyDir(const std::string& dir, const std::string& relPath);
+std::string applyDir(const std::string& dir, const std::string& relPath,
+                     bool allowAbsolutePath = true);
 
 // In HTTP/FTP, file name is file component in URI. In HTTP, filename
 // may be a value of Content-Disposition header.  They are likely
