@@ -24,6 +24,7 @@ class DownloadHelperTest : public CppUnit::TestFixture {
 
   CPPUNIT_TEST_SUITE(DownloadHelperTest);
   CPPUNIT_TEST(testCreateRequestGroupForUri);
+  CPPUNIT_TEST(testCreateRequestGroupForUri_nestedOutput);
   CPPUNIT_TEST(testCreateRequestGroupForUri_parameterized);
   CPPUNIT_TEST(testCreateRequestGroupForUriList);
 
@@ -48,6 +49,7 @@ public:
   void tearDown() {}
 
   void testCreateRequestGroupForUri();
+  void testCreateRequestGroupForUri_nestedOutput();
   void testCreateRequestGroupForUri_parameterized();
   void testCreateRequestGroupForUriList();
 
@@ -128,6 +130,22 @@ void DownloadHelperTest::testCreateRequestGroupForUri()
         alphaGroup->getDownloadContext();
     // See filename is not assigned yet
     CPPUNIT_ASSERT_EQUAL(std::string(""), alphaCtx->getBasePath());
+  }
+}
+
+void DownloadHelperTest::testCreateRequestGroupForUri_nestedOutput()
+{
+  option_->put(PREF_SPLIT, "1");
+  option_->put(PREF_MAX_CONNECTION_PER_SERVER, "1");
+  option_->put(PREF_DIR, "/downloads");
+  option_->put(PREF_OUT, "/cloud/album/file.out");
+  for (const auto& uri : {"http://alpha/file", "ftp://alpha/file"}) {
+    std::vector<std::shared_ptr<RequestGroup>> result;
+    createRequestGroupForUri(result, option_, {uri});
+    CPPUNIT_ASSERT_EQUAL((size_t)1, result.size());
+    CPPUNIT_ASSERT_EQUAL(
+        std::string("/downloads//cloud/album/file.out"),
+        result[0]->getDownloadContext()->getFirstFileEntry()->getPath());
   }
 }
 

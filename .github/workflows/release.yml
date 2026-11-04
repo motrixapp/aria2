@@ -7,7 +7,7 @@ on:
     inputs:
       version:
         description: 'Version for a dry run (no leading v)'
-        default: '1.37.0-motrix.22-dev'
+        default: '1.37.0-motrix.23-dev'
 
 permissions:
   contents: write
@@ -412,6 +412,8 @@ jobs:
         fi
     - name: Verify task cookies and credential redirects
       run: node --test --test-concurrency=1 test/e2e/task-cookies.e2e.test.mjs test/e2e/http-retry.e2e.test.mjs
+    - name: Verify nested cloud-drive output paths
+      run: node --test test/e2e/nested-output.e2e.test.mjs
 
   legacy-checkpoint-contract:
     needs: [macos, windows, linux]
@@ -578,6 +580,8 @@ jobs:
           'aria2 fork build for Motrix. Base: upstream 1.37.0.' \
           '' \
           'Highlights:' \
+          '- Restore HTTP/FTP output paths relative to the download directory, including leading-slash paths sent by cloud-drive RPC clients (agalwood/Motrix#2502).' \
+          '- Verify nested Unicode directories, changed output options and SQLite restart recovery while preserving absolute BitTorrent file mappings.' \
           '- Retain failed unfinished HTTP task cookies, including explicitly empty cookie contexts, across engine restarts.' \
           '- Resume an opted-in HTTP task with its original GID, checkpoint, request options and task-scoped cookies through versioned RPCs.' \
           '- Verify the original source, output path and persisted resource validators before reusing partial data; refuse unverifiable or changed resources.' \
@@ -594,6 +598,7 @@ jobs:
           '- Retain task-scoped cookies, cross-origin credential isolation and long-path support.' \
           '' \
           'Compatibility:' \
+          '- HTTP/FTP --out is relative to --dir, matching upstream aria2. Use --dir to select an absolute destination; absolute BitTorrent --index-out mappings remain supported.' \
           '- Schema 6 cannot be opened by older engines. Downgrades require the pre-upgrade backup; do not delete or reset the upgraded database.' \
           '- Native HTTP retry requires enabled SQLite persistence, a supporting client, and historical context captured for an opted-in task. Previously deleted cookies or missing historical validators cannot be reconstructed.' \
           '- BT activation verifies pieces and may write shared-piece bytes in an unselected adjacent file; zero upload is not guaranteed.' \

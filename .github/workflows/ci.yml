@@ -118,6 +118,11 @@ jobs:
       env:
         ARIA2_E2E_BIN: ${{ github.workspace }}/src/aria2c
       run: node --test test/e2e/select-dns.e2e.test.mjs
+    - name: Verify nested cloud-drive output paths
+      if: matrix.bittorrent == 'with-bt'
+      env:
+        ARIA2_E2E_BIN: ${{ github.workspace }}/src/aria2c
+      run: node --test test/e2e/nested-output.e2e.test.mjs
     - name: Verify legacy recovery and schema upgrade snapshots
       if: matrix.bittorrent == 'with-bt'
       env:
@@ -228,6 +233,10 @@ jobs:
       env:
         ARIA2_E2E_BIN: ${{ github.workspace }}\bin\aria2c.exe
       run: node --test test/e2e/select-dns.e2e.test.mjs
+    - name: Verify nested cloud-drive output paths
+      env:
+        ARIA2_E2E_BIN: ${{ github.workspace }}\bin\aria2c.exe
+      run: node --test test/e2e/nested-output.e2e.test.mjs
     - name: Verify native HTTP redirect policy
       env:
         ARIA2_E2E_BIN: ${{ github.workspace }}\bin\aria2c.exe
