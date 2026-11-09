@@ -7,7 +7,7 @@ on:
     inputs:
       version:
         description: 'Version for a dry run (no leading v)'
-        default: '1.37.0-motrix.23-dev'
+        default: '1.37.0-motrix.24-dev'
 
 permissions:
   contents: write
@@ -218,10 +218,11 @@ jobs:
     - name: Verify native PE architecture
       shell: pwsh
       run: scripts/ci/verify-windows-binary.ps1 -Architecture '${{ matrix.asset_arch }}'
-    - name: Verify select DNS retransmission, failover and exhaustion
+    - name: Verify Windows select DNS and dual-stack connection failover
+      shell: pwsh
       env:
         ARIA2_E2E_BIN: ${{ github.workspace }}\bin\aria2c.exe
-      run: node --test test/e2e/select-dns.e2e.test.mjs
+      run: scripts/ci/test-windows-select.ps1
     - name: Record candidate identity
       shell: pwsh
       run: |
@@ -580,6 +581,8 @@ jobs:
           'aria2 fork build for Motrix. Base: upstream 1.37.0.' \
           '' \
           'Highlights:' \
+          '- Try remaining resolved addresses when Winsock reports an asynchronous connect failure; preserve the default DNS and IPv6 policies.' \
+          '- Handle failed and timed-out backup IPv4 connections, and report exhausted TCP candidates as network errors.' \
           '- Restore HTTP/FTP output paths relative to the download directory, including leading-slash paths sent by cloud-drive RPC clients (agalwood/Motrix#2502).' \
           '- Verify nested Unicode directories, changed output options and SQLite restart recovery while preserving absolute BitTorrent file mappings.' \
           '- Retain failed unfinished HTTP task cookies, including explicitly empty cookie contexts, across engine restarts.' \
