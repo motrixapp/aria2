@@ -872,7 +872,8 @@ bool AbstractCommand::checkIfConnectionEstablished(
           ->getOrCreateServerStat(req_->getHost(), req_->getProtocol())
           ->setError();
     }
-    throw DL_RETRY_EX(fmt(MSG_ESTABLISHING_CONNECTION_FAILED, error.c_str()));
+    throw DL_RETRY_EX2(fmt(MSG_ESTABLISHING_CONNECTION_FAILED, error.c_str()),
+                       error_code::NETWORK_PROBLEM);
   }
 
   A2_LOG_INFO(fmt(MSG_CONNECT_FAILED_AND_RETRY, getCuid(),

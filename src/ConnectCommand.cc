@@ -114,7 +114,10 @@ bool ConnectCommand::executeInternal()
 
 bool ConnectCommand::noCheck() const
 {
-  return backupConnectionInfo_ && !backupConnectionInfo_->ipaddr.empty();
+  // Winsock reports a failed nonblocking connect in exceptfds rather than
+  // writefds. Read SO_ERROR through the same address failover path.
+  return errorEventEnabled() ||
+         (backupConnectionInfo_ && !backupConnectionInfo_->ipaddr.empty());
 }
 
 } // namespace aria2

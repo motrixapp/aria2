@@ -229,10 +229,11 @@ jobs:
       env:
         ARIA2_E2E_BIN: ${{ github.workspace }}\bin\aria2c.exe
       run: node --test --test-concurrency=1 test/e2e/task-cookies.e2e.test.mjs test/e2e/http-retry.e2e.test.mjs
-    - name: Verify select DNS retransmission, failover and exhaustion
+    - name: Verify Windows select DNS and dual-stack connection failover
+      shell: pwsh
       env:
         ARIA2_E2E_BIN: ${{ github.workspace }}\bin\aria2c.exe
-      run: node --test test/e2e/select-dns.e2e.test.mjs
+      run: scripts/ci/test-windows-select.ps1
     - name: Verify nested cloud-drive output paths
       env:
         ARIA2_E2E_BIN: ${{ github.workspace }}\bin\aria2c.exe

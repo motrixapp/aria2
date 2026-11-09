@@ -505,7 +505,8 @@ void SocketCore::establishConnection(const std::string& host, uint16_t port,
     break;
   }
   if (sockfd_ == (sock_t)-1) {
-    throw DL_ABORT_EX(fmt(EX_SOCKET_CONNECT, host.c_str(), error.c_str()));
+    throw DL_ABORT_EX2(fmt(EX_SOCKET_CONNECT, host.c_str(), error.c_str()),
+                       error_code::NETWORK_PROBLEM);
   }
 }
 

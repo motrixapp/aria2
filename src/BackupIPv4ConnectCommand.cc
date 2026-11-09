@@ -87,7 +87,7 @@ bool BackupIPv4ConnectCommand::execute()
     retval = true;
   }
   else if (socket_) {
-    if (writeEventEnabled()) {
+    if (writeEventEnabled() || errorEventEnabled()) {
       try {
         std::string error = socket_->getSocketError();
         if (error.empty()) {
@@ -113,8 +113,13 @@ bool BackupIPv4ConnectCommand::execute()
         retval = true;
       }
     }
+    else if (timeoutCheck_.difference(global::wallclock()) >= timeout_) {
+      A2_LOG_INFO(
+          fmt("CUID#%" PRId64 " - Backup connection command timeout", getCuid()));
+      retval = true;
+    }
   }
-  else if (!socket_) {
+  else {
     // TODO Although we check 300ms initial timeout as described in
     // RFC 6555, the interval will be much longer and around 1 second
     // due to the refresh interval mechanism in DownloadEngine.
@@ -133,11 +138,6 @@ bool BackupIPv4ConnectCommand::execute()
         retval = true;
       }
     }
-  }
-  else if (timeoutCheck_.difference(global::wallclock()) >= timeout_) {
-    A2_LOG_INFO(
-        fmt("CUID#%" PRId64 " - Backup connection command timeout", getCuid()));
-    retval = true;
   }
   if (!retval) {
     e_->addCommand(std::unique_ptr<Command>(this));
