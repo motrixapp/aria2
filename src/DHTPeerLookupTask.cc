@@ -75,8 +75,10 @@ void DHTPeerLookupTask::onReceivedInternal(
     const DHTGetPeersReplyMessage* message)
 {
   std::shared_ptr<DHTNode> remoteNode = message->getRemoteNode();
-  tokenStorage_[util::toHex(remoteNode->getID(), DHT_ID_LENGTH)] =
-      message->getToken();
+  if (!message->getToken().empty()) {
+    tokenStorage_[util::toHex(remoteNode->getID(), DHT_ID_LENGTH)] =
+        message->getToken();
+  }
   peerStorage_->addPeer(message->getValues());
   A2_LOG_INFO(fmt("Received %lu peers.",
                   static_cast<unsigned long>(message->getValues().size())));
@@ -106,16 +108,16 @@ void DHTPeerLookupTask::onFinish()
     }
     auto& node = (*i)->node;
     std::string idHex = util::toHex(node->getID(), DHT_ID_LENGTH);
-    std::string token = tokenStorage_[idHex];
-    if (token.empty()) {
-      A2_LOG_DEBUG(fmt("Token is empty for ID:%s", idHex.c_str()));
+    auto token = tokenStorage_.find(idHex);
+    if (token == tokenStorage_.end() || token->second.empty()) {
+      A2_LOG_DEBUG(fmt("No announce token for ID:%s", idHex.c_str()));
       continue;
     }
     getMessageDispatcher()->addMessageToQueue(
         getMessageFactory()->createAnnouncePeerMessage(
             node,
             getTargetID(), // this is infoHash
-            tcpPort_, token));
+            tcpPort_, token->second));
     --num;
   }
 }

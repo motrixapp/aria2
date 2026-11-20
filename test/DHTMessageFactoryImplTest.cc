@@ -35,6 +35,9 @@ class DHTMessageFactoryImplTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testCreateGetPeersMessage);
   CPPUNIT_TEST(testCreateGetPeersReplyMessage);
   CPPUNIT_TEST(testCreateGetPeersReplyMessage6);
+  CPPUNIT_TEST(testCreateGetPeersReplyMessageWithoutToken);
+  CPPUNIT_TEST(testCreateGetPeersReplyMessageWithoutToken6);
+  CPPUNIT_TEST(testCreateGetPeersReplyMessageMalformed);
   CPPUNIT_TEST(testCreateAnnouncePeerMessage);
   CPPUNIT_TEST(testCreateAnnouncePeerReplyMessage);
   CPPUNIT_TEST(testReceivedErrorMessage);
@@ -83,6 +86,10 @@ public:
   void testCreateGetPeersMessage();
   void testCreateGetPeersReplyMessage();
   void testCreateGetPeersReplyMessage6();
+  void testCreateGetPeersReplyMessageWithoutToken();
+  void testCreateGetPeersReplyMessageWithoutToken6();
+  void testCreateGetPeersReplyMessageMalformed();
+  void checkGetPeersReplyWithoutToken(int family);
   void testCreateAnnouncePeerMessage();
   void testCreateAnnouncePeerReplyMessage();
   void testReceivedErrorMessage();
@@ -399,6 +406,89 @@ void DHTMessageFactoryImplTest::testCreateGetPeersReplyMessage6()
   }
   catch (Exception& e) {
     CPPUNIT_FAIL(e.stackTrace());
+  }
+}
+
+void DHTMessageFactoryImplTest::checkGetPeersReplyWithoutToken(int family)
+{
+  factory = make_unique<DHTMessageFactoryImpl>(family);
+  factory->setLocalNode(localNode);
+  factory->setRoutingTable(routingTable.get());
+  auto node = family == AF_INET ? remoteNode_.get() : remoteNode6_.get();
+  unsigned char compact[COMPACT_LEN_IPV6];
+  auto len = bittorrent::packcompact(compact, node->getIPAddress(),
+                                     node->getPort());
+  auto nodes = std::string(reinterpret_cast<const char*>(node->getID()),
+                           DHT_ID_LENGTH) +
+               std::string(reinterpret_cast<const char*>(compact), len);
+  Dict dict;
+  dict.put("t", String::g(transactionID, DHT_TRANSACTION_ID_LENGTH));
+  dict.put("y", "r");
+  auto reply = Dict::g();
+  reply->put("id", String::g(remoteNodeID, DHT_ID_LENGTH));
+  reply->put(family == AF_INET ? "nodes" : "nodes6", nodes);
+  dict.put("r", std::move(reply));
+
+  auto response = factory->createResponseMessage(
+      "get_peers", &dict, node->getIPAddress(), node->getPort());
+  auto message = dynamic_cast<DHTGetPeersReplyMessage*>(response.get());
+  CPPUNIT_ASSERT(message);
+  CPPUNIT_ASSERT(message->getToken().empty());
+  CPPUNIT_ASSERT_EQUAL(size_t(1), message->getClosestKNodes().size());
+  CPPUNIT_ASSERT(*node == *message->getClosestKNodes().front());
+  CPPUNIT_ASSERT(message->getValues().empty());
+  CPPUNIT_ASSERT_EQUAL(util::toHex(transactionID, DHT_TRANSACTION_ID_LENGTH),
+                       util::toHex(message->getTransactionID()));
+}
+
+void DHTMessageFactoryImplTest::testCreateGetPeersReplyMessageWithoutToken()
+{
+  checkGetPeersReplyWithoutToken(AF_INET);
+}
+
+void DHTMessageFactoryImplTest::testCreateGetPeersReplyMessageWithoutToken6()
+{
+  checkGetPeersReplyWithoutToken(AF_INET6);
+}
+
+void DHTMessageFactoryImplTest::testCreateGetPeersReplyMessageMalformed()
+{
+  for (auto family : {AF_INET, AF_INET6}) {
+    factory = make_unique<DHTMessageFactoryImpl>(family);
+    factory->setLocalNode(localNode);
+    factory->setRoutingTable(routingTable.get());
+    auto node = family == AF_INET ? remoteNode_.get() : remoteNode6_.get();
+    auto nodesKey = family == AF_INET ? "nodes" : "nodes6";
+    for (int variant = 0; variant < 6; ++variant) {
+      Dict dict;
+      dict.put("t", String::g(transactionID, DHT_TRANSACTION_ID_LENGTH));
+      dict.put("y", "r");
+      auto reply = Dict::g();
+      reply->put("id", String::g(remoteNodeID, DHT_ID_LENGTH));
+      reply->put(nodesKey, "");
+      // All malformed cases have no token, except the wrong-type token cases.
+      if (variant == 0) {
+        reply->put("token", Integer::g(1));
+      }
+      else if (variant == 1) {
+        reply->put("token", List::g());
+      }
+      else if (variant == 2) {
+        reply->removeKey("id");
+      }
+      else if (variant == 3) {
+        reply->put("id", std::string(DHT_ID_LENGTH - 1, 'x'));
+      }
+      else {
+        auto len = DHT_ID_LENGTH + bittorrent::getCompactLength(family);
+        reply->put(nodesKey, std::string(variant == 4 ? len - 1 : len + 1, 'x'));
+      }
+      dict.put("r", std::move(reply));
+      CPPUNIT_ASSERT_THROW(factory->createResponseMessage(
+                               "get_peers", &dict, node->getIPAddress(),
+                               node->getPort()),
+                           RecoverableException);
+    }
   }
 }
 

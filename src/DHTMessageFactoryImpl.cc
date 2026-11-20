@@ -445,9 +445,14 @@ DHTMessageFactoryImpl::createGetPeersReplyMessage(
       }
     }
   }
-  const String* token = getString(rDict, DHTGetPeersReplyMessage::TOKEN);
+  // Bootstrap routers can return nodes without an announce token.  Such a
+  // response is useful for traversal, but not for announcing ourselves.
+  // An explicitly supplied token must still be a string.
+  const String* token = rDict->containsKey(DHTGetPeersReplyMessage::TOKEN)
+                            ? getString(rDict, DHTGetPeersReplyMessage::TOKEN)
+                            : nullptr;
   return createGetPeersReplyMessage(remoteNode, std::move(nodes),
-                                    std::move(peers), token->s(),
+                                    std::move(peers), token ? token->s() : "",
                                     transactionID);
 }
 
