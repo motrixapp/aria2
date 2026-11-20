@@ -347,10 +347,7 @@ void IndexOutOptionHandler::parseArg(Option& option,
 {
   // See optarg is in the format of "INDEX=PATH"
   util::parseIndexPath(optarg);
-  std::string value = option.get(pref_);
-  value += optarg;
-  value += "\n";
-  option.put(pref_, value);
+  option.append(pref_, optarg, "\n");
 }
 
 std::string IndexOutOptionHandler::createPossibleValuesString() const

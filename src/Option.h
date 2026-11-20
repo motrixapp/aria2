@@ -58,6 +58,7 @@ public:
   Option& operator=(const Option& option);
 
   void put(PrefPtr pref, const std::string& value);
+  void append(PrefPtr pref, const std::string& value, const std::string& delim);
   // Returns true if name is defined. Otherwise returns false.  Note
   // that even if the value is a empty string, this method returns
   // true.  If option is not defined in this object and parent_ is not

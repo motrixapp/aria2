@@ -1,4 +1,5 @@
 #include "Option.h"
+#include "OptionHandlerImpl.h"
 
 #include <string>
 
@@ -12,6 +13,7 @@ class OptionTest : public CppUnit::TestFixture {
 
   CPPUNIT_TEST_SUITE(OptionTest);
   CPPUNIT_TEST(testPutAndGet);
+  CPPUNIT_TEST(testAppendInheritedMappings);
   CPPUNIT_TEST(testPutAndGetAsInt);
   CPPUNIT_TEST(testPutAndGetAsDouble);
   CPPUNIT_TEST(testDefined);
@@ -26,6 +28,7 @@ public:
   void setUp() {}
 
   void testPutAndGet();
+  void testAppendInheritedMappings();
   void testPutAndGetAsInt();
   void testPutAndGetAsDouble();
   void testDefined();
@@ -36,6 +39,27 @@ public:
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION(OptionTest);
+
+void OptionTest::testAppendInheritedMappings()
+{
+  auto parent = std::make_shared<Option>();
+  parent->put(PREF_INDEX_OUT, "1=parent/file\n");
+  Option child;
+  child.setParent(parent);
+  IndexOutOptionHandler handler(PREF_INDEX_OUT, "output path");
+  std::string expected = parent->get(PREF_INDEX_OUT);
+  for (unsigned i = 2; i <= 26730; ++i) {
+    auto mapping = std::to_string(i) + "=local/subdir/item";
+    handler.parse(child, mapping);
+    expected.append(mapping).push_back('\n');
+  }
+  CPPUNIT_ASSERT(expected == child.get(PREF_INDEX_OUT));
+  CPPUNIT_ASSERT_EQUAL(std::string("1=parent/file\n"), parent->get(PREF_INDEX_OUT));
+  child.removeLocal(PREF_INDEX_OUT);
+  handler.parse(child, "2=other");
+  CPPUNIT_ASSERT_EQUAL(std::string("1=parent/file\n2=other\n"),
+                       child.get(PREF_INDEX_OUT));
+}
 
 void OptionTest::testPutAndGet()
 {
