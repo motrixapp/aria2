@@ -80,6 +80,15 @@ void Option::put(PrefPtr pref, const std::string& value)
   table_[pref->i] = value;
 }
 
+void Option::append(PrefPtr pref, const std::string& value,
+                    const std::string& delim)
+{
+  if (!definedLocal(pref)) {
+    put(pref, get(pref));
+  }
+  table_[pref->i].append(value).append(delim);
+}
+
 bool Option::defined(PrefPtr pref) const
 {
   return bitfield::test(use_, use_.size() * 8, pref->i) ||
