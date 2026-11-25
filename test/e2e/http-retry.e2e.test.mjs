@@ -76,9 +76,13 @@ describe('HTTP retry preserves the original task and resource', { concurrency: f
     root = await mkdtemp(path.join(tmpdir(), 'aria2-http-retry-'))
     server = createServer((req, res) => {
       requests.push({ path: req.url, range: req.headers.range, cookie: req.headers.cookie })
-      const state = routes.get(req.url)
+      const pathname = req.url.split('?')[0]
+      const state = routes.get(req.url) ?? routes.get(pathname)
       if (!state) return res.writeHead(404).end()
-      if (state.redirect) return res.writeHead(302, { location: state.redirect, 'content-length': 0 }).end()
+      if (state.redirect) {
+        const location = typeof state.redirect === 'function' ? state.redirect(req) : state.redirect
+        return res.writeHead(302, { location, 'content-length': 0 }).end()
+      }
       const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? '')
       const offset = range && !state.ignoreRange ? Number(range[1]) : 0
       const end = range?.[2] && !state.ignoreRange ? Number(range[2]) : state.body.length - 1
@@ -360,5 +364,59 @@ describe('HTTP retry preserves the original task and resource', { concurrency: f
     assert.equal(sql(e, 'SELECT count(*) n FROM task WHERE gid=?', removed.gid)[0].n, 0)
     assert.equal(sql(e, 'SELECT count(*) n FROM download_history WHERE gid=?', removed.gid)[0].n, 0)
     assert.deepEqual(await readFile(removed.file), removed.before)
+  })
+
+  it('keeps multiple connections and resumes across dynamic redirect targets with matching validator (#2551)', async t => {
+    const e = await engine(t, undefined, ['--split=8', '--max-connection-per-server=8', '--min-split-size=1M'])
+    const targetPath = `/cdn-dynamic-${++serial}`
+    const sourcePath = `/redirect-dynamic-${++serial}`
+    let tokenSeq = 0
+    const targetState = { drop: false, etag: '"cdn-stable-v1"', body: payload }
+    routes.set(targetPath, targetState)
+    routes.set(sourcePath, { redirect: () => `${base}${targetPath}?token=${++tokenSeq}` })
+
+    const file = path.join(e.dir, `dynamic-multi-${serial}.motrix`)
+    const mark = requests.length
+    const gid = await e.rpc.call('aria2.addUri', [[base + sourcePath], {
+      out: path.basename(file),
+      'http-resume-context': 'true',
+      split: '8',
+      'max-connection-per-server': '8',
+      'min-split-size': '1M',
+    }])
+    await until(() => e.rpc.tellStatus(gid), s => s.status === 'complete')
+    assert.deepEqual(await readFile(file), payload)
+    // 验证同一下载确实发起了多次不同动态重定向目标的并发分片请求，而非退化为单连接
+    const rangeHits = requests.slice(mark).filter(r => r.path.startsWith(`${targetPath}?token=`) && r.range)
+    assert.ok(rangeHits.length >= 2, `expected multiple ranged dynamic redirect requests, got ${rangeHits.length}`)
+    assert.ok(tokenSeq >= 3, `expected distinct redirect tokens across connections, got ${tokenSeq}`)
+
+    // 同一动态重定向源在断线后：ETag 一致时可安全续传，ETag 变化时仍拒绝修改残片
+    const retryTarget = `/cdn-retry-${++serial}`
+    const retrySource = `/redirect-retry-${++serial}`
+    let retryToken = 0
+    const retryState = { drop: true, etag: '"cdn-retry-v1"', body: payload }
+    routes.set(retryTarget, retryState)
+    routes.set(retrySource, { redirect: () => `${base}${retryTarget}?token=${++retryToken}` })
+    const retryFile = path.join(e.dir, `dynamic-retry-${serial}.motrix`)
+    const retryGid = await e.rpc.call('aria2.addUriWithCookies', [[base + retrySource], cookies, {
+      out: path.basename(retryFile),
+      'http-resume-context': 'true',
+    }])
+    await until(() => e.rpc.tellStatus(retryGid), s => s.status === 'error')
+    const partialBefore = await readFile(retryFile)
+    const retryTask = { gid: retryGid, uri: base + retrySource, file: retryFile }
+
+    retryState.drop = false
+    retryState.etag = '"cdn-retry-v2"'
+    await retry(e, retryTask)
+    const rejected = await until(() => e.rpc.tellStatus(retryGid), s => s.status === 'error')
+    assert.equal(rejected.errorCode, '8')
+    assert.deepEqual(await readFile(retryFile), partialBefore)
+
+    retryState.etag = '"cdn-retry-v1"'
+    await retry(e, retryTask)
+    await until(() => e.rpc.tellStatus(retryGid), s => s.status === 'complete')
+    assert.deepEqual(await readFile(retryFile), payload)
   })
 })
