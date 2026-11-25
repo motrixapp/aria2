@@ -123,9 +123,18 @@ void bindHttpPayload(HttpResponse* response, RequestGroup* group,
     const auto& value = headers->find(expected->validatorKind == "etag"
                                           ? HttpHeader::ETAG
                                           : HttpHeader::LAST_MODIFIED);
+    const bool sourceDowngraded =
+        util::istartsWith(request->getUri(), "https://") &&
+        !util::strieq(request->getProtocol(), "https");
+    // 当初始下载与当前连接均来自同一源 URI 的重定向目标（如动态签名或边缘节点 CDN）时，
+    // 在未发生 HTTPS 降级且校验器与实体长度一致的前提下允许 currentUri 变化，避免并发分片退化为单连接 (#2551)。
+    // 若初始资源为直连无重定向，仍严格拒绝后续重定向变更。
+    const bool dynamicRedirectMatch =
+        expected->sourceHash != expected->resourceHash &&
+        sourceHash != resourceHash && !sourceDowngraded;
     if (!representable || response->getHttpRequest()->conditionalRequest() ||
         expected->sourceHash != sourceHash ||
-        expected->resourceHash != resourceHash ||
+        (expected->resourceHash != resourceHash && !dynamicRedirectMatch) ||
         expected->outputPath != file->getPath() ||
         expected->totalLength != length || expected->validator != value) {
       throw DL_ABORT_EX2(
