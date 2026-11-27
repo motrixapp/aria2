@@ -1585,19 +1585,12 @@ const uint32_t APIPA_IPV4_END = 2852061183u;   // 169.254.255.255
 } // namespace
 #endif // __MINGW32__
 
-bool isPublicIPv6Addr(const in6_addr& addr)
+bool isConfiguredIPv6Addr(const in6_addr& addr)
 {
-  // 过滤未指定、回环、链路本地、站点本地、组播、IPv4 映射以及 RFC 4193 私有 ULA (fc00::/7) 地址
-  if (IN6_IS_ADDR_UNSPECIFIED(&addr) || IN6_IS_ADDR_LOOPBACK(&addr) ||
-      IN6_IS_ADDR_LINKLOCAL(&addr) || IN6_IS_ADDR_SITELOCAL(&addr) ||
-      IN6_IS_ADDR_MULTICAST(&addr) || IN6_IS_ADDR_V4MAPPED(&addr)) {
-    return false;
-  }
-  const auto* bytes = reinterpret_cast<const unsigned char*>(&addr);
-  if ((bytes[0] & 0xfe) == 0xfc) {
-    return false;
-  }
-  return true;
+  // 过滤未指定、回环、链路本地、站点本地、组播与 IPv4 映射地址，保留公网及内网 ULA 地址
+  return !IN6_IS_ADDR_UNSPECIFIED(&addr) && !IN6_IS_ADDR_LOOPBACK(&addr) &&
+         !IN6_IS_ADDR_LINKLOCAL(&addr) && !IN6_IS_ADDR_SITELOCAL(&addr) &&
+         !IN6_IS_ADDR_MULTICAST(&addr) && !IN6_IS_ADDR_V4MAPPED(&addr);
 }
 
 void checkAddrconfig()
@@ -1657,7 +1650,7 @@ void checkAddrconfig()
       }
       case sizeof(sockaddr_in6):
         memcpy(&ad.storage, i->Address.lpSockaddr, i->Address.iSockaddrLength);
-        if (isPublicIPv6Addr(ad.in6.sin6_addr)) {
+        if (isConfiguredIPv6Addr(ad.in6.sin6_addr)) {
           ipv6AddrConfigured = true;
           found = true;
         }
@@ -1714,7 +1707,7 @@ void checkAddrconfig()
     case AF_INET6: {
       addrlen = sizeof(sockaddr_in6);
       memcpy(&ad.storage, ifa->ifa_addr, addrlen);
-      if (isPublicIPv6Addr(ad.in6.sin6_addr)) {
+      if (isConfiguredIPv6Addr(ad.in6.sin6_addr)) {
         ipv6AddrConfigured = true;
         found = true;
       }
