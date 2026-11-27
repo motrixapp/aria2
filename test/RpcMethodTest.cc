@@ -816,6 +816,23 @@ void RpcMethodTest::testChangeGlobalOption()
   CPPUNIT_ASSERT_EQUAL(1, res.code);
   CPPUNIT_ASSERT_EQUAL(std::string("1024"),
                        e_->getOption()->get(PREF_MAX_CONNECTION_PER_SERVER));
+
+#ifdef ENABLE_ASYNC_DNS
+  // 验证切换 async-dns 时会清空进程内残留的 DNS 缓存
+  e_->cacheIPAddress("dualstack.example.com", "2001:db8::1", 443);
+  CPPUNIT_ASSERT_EQUAL(std::string("2001:db8::1"),
+                       e_->findCachedIPAddress("dualstack.example.com", 443));
+  req = createReq(ChangeGlobalOptionRpcMethod::getMethodName());
+  opt = Dict::g();
+  opt->put(PREF_ASYNC_DNS->k, A2_V_FALSE);
+  req.params->append(std::move(opt));
+  res = m.execute(std::move(req), e_.get());
+  CPPUNIT_ASSERT_EQUAL(0, res.code);
+  CPPUNIT_ASSERT_EQUAL(std::string("false"),
+                       e_->getOption()->get(PREF_ASYNC_DNS));
+  CPPUNIT_ASSERT_EQUAL(std::string(""),
+                       e_->findCachedIPAddress("dualstack.example.com", 443));
+#endif // ENABLE_ASYNC_DNS
 }
 
 void RpcMethodTest::testChangeGlobalOption_withBadOption()

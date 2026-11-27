@@ -422,6 +422,7 @@ bool verifyHostname(const std::string& hostname,
 // IPv6. The result can be obtained using getIpv4AddrConfigured() and
 // getIpv6AddrConfigured() respectively.
 void checkAddrconfig();
+bool isPublicIPv6Addr(const in6_addr& addr);
 bool getIPv4AddrConfigured();
 bool getIPv6AddrConfigured();
 

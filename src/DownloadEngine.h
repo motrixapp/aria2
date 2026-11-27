@@ -337,6 +337,8 @@ public:
 
   void removeCachedIPAddress(const std::string& hostname, uint16_t port);
 
+  void clearDnsCache();
+
   void setAuthConfigFactory(std::unique_ptr<AuthConfigFactory> factory);
 
   const std::unique_ptr<AuthConfigFactory>& getAuthConfigFactory() const;

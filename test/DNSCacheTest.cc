@@ -11,6 +11,7 @@ class DNSCacheTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testMarkBad);
   CPPUNIT_TEST(testPutBadAddr);
   CPPUNIT_TEST(testRemove);
+  CPPUNIT_TEST(testClear);
   CPPUNIT_TEST_SUITE_END();
 
   DNSCache cache_;
@@ -29,6 +30,7 @@ public:
   void testMarkBad();
   void testPutBadAddr();
   void testRemove();
+  void testClear();
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION(DNSCacheTest);
@@ -59,6 +61,14 @@ void DNSCacheTest::testRemove()
 {
   cache_.remove("www", 80);
   CPPUNIT_ASSERT_EQUAL(std::string(""), cache_.find("www", 80));
+}
+
+void DNSCacheTest::testClear()
+{
+  cache_.clear();
+  CPPUNIT_ASSERT_EQUAL(std::string(""), cache_.find("www", 80));
+  CPPUNIT_ASSERT_EQUAL(std::string(""), cache_.find("ftp", 21));
+  CPPUNIT_ASSERT_EQUAL(std::string(""), cache_.find("proxy", 8080));
 }
 
 } // namespace aria2

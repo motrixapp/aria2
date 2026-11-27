@@ -42,6 +42,7 @@
 #include <unistd.h>
 #ifdef HAVE_IFADDRS_H
 #  include <ifaddrs.h>
+#  include <net/if.h>
 #endif // HAVE_IFADDRS_H
 
 #include <cerrno>
@@ -1584,6 +1585,21 @@ const uint32_t APIPA_IPV4_END = 2852061183u;   // 169.254.255.255
 } // namespace
 #endif // __MINGW32__
 
+bool isPublicIPv6Addr(const in6_addr& addr)
+{
+  // 过滤未指定、回环、链路本地、站点本地、组播、IPv4 映射以及 RFC 4193 私有 ULA (fc00::/7) 地址
+  if (IN6_IS_ADDR_UNSPECIFIED(&addr) || IN6_IS_ADDR_LOOPBACK(&addr) ||
+      IN6_IS_ADDR_LINKLOCAL(&addr) || IN6_IS_ADDR_SITELOCAL(&addr) ||
+      IN6_IS_ADDR_MULTICAST(&addr) || IN6_IS_ADDR_V4MAPPED(&addr)) {
+    return false;
+  }
+  const auto* bytes = reinterpret_cast<const unsigned char*>(&addr);
+  if ((bytes[0] & 0xfe) == 0xfc) {
+    return false;
+  }
+  return true;
+}
+
 void checkAddrconfig()
 {
 #ifdef HAVE_IPHLPAPI_H
@@ -1613,6 +1629,10 @@ void checkAddrconfig()
   sockaddr_union ad;
   int rv;
   for (IP_ADAPTER_ADDRESSES* p = buf; p; p = p->Next) {
+    if (p->OperStatus != IfOperStatusUp) {
+      // 忽略未启用或已断开的网卡，避免残留虚拟网卡触发无效 IPv6 探测
+      continue;
+    }
     if (p->IfType == IF_TYPE_TUNNEL) {
       // Skip tunnel interface because Windows7 automatically setup
       // this for IPv6.
@@ -1637,8 +1657,7 @@ void checkAddrconfig()
       }
       case sizeof(sockaddr_in6):
         memcpy(&ad.storage, i->Address.lpSockaddr, i->Address.iSockaddrLength);
-        if (!IN6_IS_ADDR_LOOPBACK(&ad.in6.sin6_addr) &&
-            !IN6_IS_ADDR_LINKLOCAL(&ad.in6.sin6_addr)) {
+        if (isPublicIPv6Addr(ad.in6.sin6_addr)) {
           ipv6AddrConfigured = true;
           found = true;
         }
@@ -1677,7 +1696,7 @@ void checkAddrconfig()
   char host[NI_MAXHOST];
   sockaddr_union ad;
   for (ifaddrs* ifa = ifaddr; ifa; ifa = ifa->ifa_next) {
-    if (!ifa->ifa_addr) {
+    if (!ifa->ifa_addr || !(ifa->ifa_flags & IFF_UP)) {
       continue;
     }
     bool found = false;
@@ -1695,8 +1714,7 @@ void checkAddrconfig()
     case AF_INET6: {
       addrlen = sizeof(sockaddr_in6);
       memcpy(&ad.storage, ifa->ifa_addr, addrlen);
-      if (!IN6_IS_ADDR_LOOPBACK(&ad.in6.sin6_addr) &&
-          !IN6_IS_ADDR_LINKLOCAL(&ad.in6.sin6_addr)) {
+      if (isPublicIPv6Addr(ad.in6.sin6_addr)) {
         ipv6AddrConfigured = true;
         found = true;
       }
