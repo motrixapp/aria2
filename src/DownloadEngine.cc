@@ -607,6 +607,8 @@ void DownloadEngine::removeCachedIPAddress(const std::string& hostname,
   dnsCache_->remove(hostname, port);
 }
 
+void DownloadEngine::clearDnsCache() { dnsCache_->clear(); }
+
 void DownloadEngine::setAuthConfigFactory(
     std::unique_ptr<AuthConfigFactory> factory)
 {

@@ -19,6 +19,7 @@ class SocketCoreTest : public CppUnit::TestFixture {
   CPPUNIT_TEST(testInetNtop);
   CPPUNIT_TEST(testInetPton);
   CPPUNIT_TEST(testGetBinAddr);
+  CPPUNIT_TEST(testIsConfiguredIPv6Addr);
   CPPUNIT_TEST(testVerifyHostname);
 #ifdef ENABLE_SSL
   CPPUNIT_TEST(testClientTlsHandshakeRemoteCloseIsRetriable);
@@ -38,6 +39,7 @@ public:
   void testInetNtop();
   void testInetPton();
   void testGetBinAddr();
+  void testIsConfiguredIPv6Addr();
   void testVerifyHostname();
 #ifdef ENABLE_SSL
   void testClientTlsHandshakeRemoteCloseIsRetriable();
@@ -290,5 +292,27 @@ void SocketCoreTest::testWinTlsContextAllowsTls13Minimum()
 }
 #endif // HAVE_WINTLS
 #endif // ENABLE_SSL
+
+void SocketCoreTest::testIsConfiguredIPv6Addr()
+{
+  auto check = [](const std::string& ip) {
+    in6_addr addr{};
+    CPPUNIT_ASSERT_EQUAL(0, inetPton(AF_INET6, ip.c_str(), &addr));
+    return net::isConfiguredIPv6Addr(addr);
+  };
+
+  CPPUNIT_ASSERT(!check("::"));
+  CPPUNIT_ASSERT(!check("::1"));
+  CPPUNIT_ASSERT(!check("fe80::1"));
+  CPPUNIT_ASSERT(!check("fec0::1"));
+  CPPUNIT_ASSERT(!check("ff02::1"));
+  CPPUNIT_ASSERT(!check("::ffff:192.0.2.1"));
+
+  CPPUNIT_ASSERT(check("fc00::1"));
+  CPPUNIT_ASSERT(check("fd42:2421::1"));
+  CPPUNIT_ASSERT(check("2001:db8::1"));
+  CPPUNIT_ASSERT(check("240e:123:456::1"));
+  CPPUNIT_ASSERT(check("2606:4700::1111"));
+}
 
 } // namespace aria2

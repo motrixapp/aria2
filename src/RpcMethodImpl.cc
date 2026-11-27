@@ -2483,6 +2483,11 @@ void changeGlobalOption(const Option& option, DownloadEngine* e)
     auto& openedFileCounter = e->getRequestGroupMan()->getOpenedFileCounter();
     openedFileCounter->setMaxOpenFiles(option.getAsInt(PREF_BT_MAX_OPEN_FILES));
   }
+  if (option.defined(PREF_ASYNC_DNS)) {
+    // 切换异步/系统 DNS 解析方式时立即清空内存 DNS 缓存，避免残留的旧记录继续命中
+    e->clearDnsCache();
+    A2_LOG_INFO("Cleared DNS cache after async-dns option change.");
+  }
 }
 
 } // namespace aria2

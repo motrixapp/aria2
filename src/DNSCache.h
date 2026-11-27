@@ -129,6 +129,8 @@ public:
                uint16_t port);
 
   void remove(const std::string& hostname, uint16_t port);
+
+  void clear();
 };
 
 } // namespace aria2

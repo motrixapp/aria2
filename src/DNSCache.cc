@@ -203,4 +203,6 @@ void DNSCache::remove(const std::string& hostname, uint16_t port)
   entries_.erase(target);
 }
 
+void DNSCache::clear() { entries_.clear(); }
+
 } // namespace aria2
